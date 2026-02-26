@@ -11,9 +11,6 @@ import random
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 
-# ─── Disable torch.compile (fixes Phi-4 LongRoPE + dynamo crash) ─────────────
-os.environ["TORCHDYNAMO_DISABLE"] = "1"
-os.environ["UNSLOTH_COMPILE_DISABLE"] = "1"
 app = Flask(__name__)
 
 # ─── Global state ─────────────────────────────────────────────────────────────
@@ -30,40 +27,73 @@ _download_dirs    = []          # partial download dirs to clean up on stop
 _monitor_events   = []          # monitor/pulse threading.Events to stop
 
 # ─── Config file ──────────────────────────────────────────────────────────────
-_REPO_DIR         = Path(__file__).parent
-_CONFIG_FILE      = _REPO_DIR / "config.json"
-_CONFIG_EXAMPLE   = _REPO_DIR / "config.example.json"
+_REPO_DIR    = Path(__file__).parent
+_CONFIG_FILE = _REPO_DIR / "config.json"
+_CONFIG_EXAMPLE = _REPO_DIR / "config.example.json"
 
-_DEFAULT_DATA_DIR = str(Path.home() / "unsloth_data")
-
-_CONFIG_EXAMPLE_CONTENT = {
-    "base_data_dir": _DEFAULT_DATA_DIR,
+CONFIG_DEFAULTS = {
+    # Paths
+    "base_data_dir": str(Path.home() / "unsloth_data"),
+    # Server
+    "host":  "0.0.0.0",
+    "port":  5000,
+    "debug": False,
+    # Training performance defaults
+    "low_memory_mode": False,
+    "speed_mode":      False,
+    "stream_dataset":  False,
+    "default_batch":   2,
+    "default_ga":      4,
+    "default_seqlen":  2048,
+    # Torch / Unsloth flags
+    "disable_torchdynamo":    True,
+    "disable_unsloth_compile": True,
+    "use_xformers":           False,
 }
 
-# Write config.example.json if it doesn't exist yet
+# Write config.example.json if missing
 if not _CONFIG_EXAMPLE.exists():
-    _CONFIG_EXAMPLE.write_text(json.dumps(_CONFIG_EXAMPLE_CONTENT, indent=2) + "\n")
+    _CONFIG_EXAMPLE.write_text(json.dumps(CONFIG_DEFAULTS, indent=2) + "\n")
+    print(f"[INFO] Created config.example.json — copy it to config.json to customise.")
 
-# Load config.json; fall back to defaults if missing
+# Load config.json, fall back to defaults for any missing keys
 if _CONFIG_FILE.exists():
     try:
-        _config = json.loads(_CONFIG_FILE.read_text())
+        _user_config = json.loads(_CONFIG_FILE.read_text())
+        print(f"[INFO] Loaded config.json")
     except Exception as e:
         print(f"[WARN] Could not parse config.json: {e} — using defaults")
-        _config = {}
+        _user_config = {}
 else:
-    print(f"[INFO] No config.json found — using default data dir: {_DEFAULT_DATA_DIR}")
-    print(f"[INFO] Copy config.example.json to config.json and edit to customise.")
-    _config = {}
+    print(f"[INFO] No config.json found — using defaults. Copy config.example.json to config.json to customise.")
+    _user_config = {}
+
+# Merge: user values win, missing keys fall back to defaults
+_cfg = {**CONFIG_DEFAULTS, **_user_config}
+
+def _save_config():
+    """Persist the current _cfg dict back to config.json."""
+    try:
+        _CONFIG_FILE.write_text(json.dumps(_cfg, indent=2) + "\n")
+    except Exception as e:
+        print(f"[WARN] Could not save config.json: {e}")
+
+# ─── Apply torch/unsloth env flags from config ────────────────────────────────
+if _cfg["disable_torchdynamo"]:
+    os.environ["TORCHDYNAMO_DISABLE"] = "1"
+if _cfg["disable_unsloth_compile"]:
+    os.environ["UNSLOTH_COMPILE_DISABLE"] = "1"
+if _cfg["use_xformers"]:
+    os.environ["UNSLOTH_USE_XFORMERS"] = "1"
 
 # ─── Data directories ─────────────────────────────────────────────────────────
-BASE_DATA_DIR  = Path(_config.get("base_data_dir", _DEFAULT_DATA_DIR))
-MODELS_DIR     = BASE_DATA_DIR / "models"
-DATASETS_DIR   = BASE_DATA_DIR / "datasets"
-OUTPUTS_DIR    = BASE_DATA_DIR / "outputs"
-GEN_DIR        = BASE_DATA_DIR / "generated_datasets"
-CLOUD_LOGS_DIR = BASE_DATA_DIR / "cloud_logs"
-TOKEN_FILE     = BASE_DATA_DIR / ".hf_token"
+BASE_DATA_DIR    = Path(_cfg["base_data_dir"]).expanduser()
+MODELS_DIR       = BASE_DATA_DIR / "models"
+DATASETS_DIR     = BASE_DATA_DIR / "datasets"
+OUTPUTS_DIR      = BASE_DATA_DIR / "outputs"
+GEN_DIR          = BASE_DATA_DIR / "generated_datasets"
+CLOUD_LOGS_DIR   = BASE_DATA_DIR / "cloud_logs"
+TOKEN_FILE       = BASE_DATA_DIR / ".hf_token"
 TUNING_LOGS_FILE = BASE_DATA_DIR / "tuning_logs.json"
 
 for d in [MODELS_DIR, DATASETS_DIR, OUTPUTS_DIR, GEN_DIR, CLOUD_LOGS_DIR]:
@@ -3094,6 +3124,26 @@ def hf_status():
     return jsonify({"logged_in":hf_token["value"] is not None,"username":hf_token["username"],"token_saved":TOKEN_FILE.exists()})
 
 
+# ── App Config ────────────────────────────────────────────────────────────────
+@app.route("/api/config", methods=["GET"])
+def get_config():
+    """Return the current config (safe subset — no secrets)."""
+    return jsonify({k: v for k, v in _cfg.items()})
+
+@app.route("/api/config", methods=["POST"])
+def post_config():
+    """Update one or more config values and persist to config.json."""
+    data = request.json or {}
+    allowed = set(CONFIG_DEFAULTS.keys())
+    updated = {}
+    for k, v in data.items():
+        if k in allowed:
+            _cfg[k] = v
+            updated[k] = v
+    _save_config()
+    return jsonify({"ok": True, "updated": updated})
+
+
 
 # ═══ SYSTEM RESOURCES ════════════════════════════════════════════════════════
 
@@ -4324,6 +4374,6 @@ if __name__ == "__main__":
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
     print("╔══════════════════════════════════════════════════╗")
     print("║    🦥  Unsloth Fine-Tuning Lab  v2.0             ║")
-    print("║    http://localhost:5000                         ║")
+    print(f"║    http://localhost:{_cfg['port']}                         ║")
     print("╚══════════════════════════════════════════════════╝")
-    app.run(debug=False, host="0.0.0.0", port=5000, threaded=True)
+    app.run(debug=_cfg["debug"], host=_cfg["host"], port=_cfg["port"], threaded=True)

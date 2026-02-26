@@ -1,3 +1,15 @@
 {
-  "base_data_dir": "~/unsloth_data"
+  "base_data_dir": "~/unsloth_data",
+  "host": "0.0.0.0",
+  "port": 5000,
+  "debug": false,
+  "low_memory_mode": false,
+  "speed_mode": true,
+  "stream_dataset": false,
+  "default_batch": 2,
+  "default_ga": 4,
+  "default_seqlen": 2048,
+  "disable_torchdynamo": true,
+  "disable_unsloth_compile": true,
+  "use_xformers": true
 }

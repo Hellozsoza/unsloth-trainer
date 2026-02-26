@@ -977,7 +977,6 @@ code { font-family:var(--mono); background:var(--s2); padding:1px 6px; border-ra
             <select id="d-cloud-provider" onchange="onCloudProviderChange()">
               <option value="google">Google (Gemini)</option>
               <option value="perplexity">Perplexity</option>
-              <option value="openrouter">OpenRouter</option>
               <option value="custom">Custom (OpenAI-compatible)</option>
             </select>
           </div>
@@ -991,10 +990,7 @@ code { font-family:var(--mono); background:var(--s2); padding:1px 6px; border-ra
           </div>
           <div class="fg full">
             <label>API Key</label>
-            <div style="display:flex;gap:6px">
-              <input id="d-cloud-apikey" type="password" placeholder="sk-..." style="flex:1">
-              <button class="btn btn-secondary btn-sm" onclick="saveCloudKey('d')" title="Save key for this provider" style="white-space:nowrap;flex-shrink:0">💾 Save</button>
-            </div>
+            <input id="d-cloud-apikey" type="password" placeholder="sk-...">
           </div>
           <div class="fg full" id="d-cloud-baseurl-row" style="display:none">
             <label>Base URL <span style="text-transform:none;font-size:9px">(for custom providers)</span></label>
@@ -1140,7 +1136,6 @@ code { font-family:var(--mono); background:var(--s2); padding:1px 6px; border-ra
             <select id="gd-cloud-provider" onchange="onGdProviderChange()">
               <option value="google">Google (Gemini)</option>
               <option value="perplexity">Perplexity</option>
-              <option value="openrouter">OpenRouter</option>
               <option value="custom">Custom (OpenAI-compatible)</option>
             </select>
           </div>
@@ -1154,10 +1149,7 @@ code { font-family:var(--mono); background:var(--s2); padding:1px 6px; border-ra
           </div>
           <div class="fg full">
             <label>API Key</label>
-            <div style="display:flex;gap:6px">
-              <input id="gd-cloud-apikey" type="password" placeholder="sk-..." style="flex:1">
-              <button class="btn btn-secondary btn-sm" onclick="saveCloudKey('gd')" title="Save key for this provider" style="white-space:nowrap;flex-shrink:0">💾 Save</button>
-            </div>
+            <input id="gd-cloud-apikey" type="password" placeholder="sk-...">
           </div>
           <div class="fg full" id="gd-cloud-baseurl-row" style="display:none">
             <label>Base URL</label>
@@ -1397,7 +1389,6 @@ code { font-family:var(--mono); background:var(--s2); padding:1px 6px; border-ra
               <option value="google">Google (Gemini)</option>
               <option value="anthropic">Anthropic</option>
               <option value="perplexity">Perplexity (has built-in search!)</option>
-              <option value="openrouter">OpenRouter</option>
               <option value="custom">Custom (OpenAI-compatible)</option>
             </select>
           </div>
@@ -1407,10 +1398,7 @@ code { font-family:var(--mono); background:var(--s2); padding:1px 6px; border-ra
           </div>
           <div class="fg full">
             <label>API Key</label>
-            <div style="display:flex;gap:6px">
-              <input id="wd-cloud-apikey" type="password" placeholder="sk-..." style="flex:1">
-              <button class="btn btn-secondary btn-sm" onclick="saveCloudKey('wd')" title="Save key for this provider" style="white-space:nowrap;flex-shrink:0">💾 Save</button>
-            </div>
+            <input id="wd-cloud-apikey" type="password" placeholder="sk-...">
           </div>
           <div class="fg full" id="wd-cloud-baseurl-row" style="display:none">
             <label>Base URL</label>
@@ -2249,7 +2237,6 @@ code { font-family:var(--mono); background:var(--s2); padding:1px 6px; border-ra
                 <select id="prune-adv-provider" onchange="onPruneAdvisorProviderChange()">
                   <option value="google">Google (Gemini)</option>
                   <option value="perplexity">Perplexity</option>
-                  <option value="openrouter">OpenRouter</option>
                   <option value="custom">Custom (OpenAI-compatible)</option>
                 </select>
               </div>
@@ -2261,12 +2248,7 @@ code { font-family:var(--mono); background:var(--s2); padding:1px 6px; border-ra
                   <button class="btn btn-secondary btn-sm" id="prune-cloud-model-fetch" onclick="fetchCloudModels('prune')" style="white-space:nowrap">🔍 Detect</button>
                 </div>
               </div>
-              <div class="fg full"><label>API Key</label>
-                <div style="display:flex;gap:6px">
-                  <input id="prune-cloud-apikey" type="password" placeholder="sk-..." style="flex:1">
-                  <button class="btn btn-secondary btn-sm" onclick="saveCloudKey('prune')" title="Save key for this provider" style="white-space:nowrap;flex-shrink:0">💾 Save</button>
-                </div>
-              </div>
+              <div class="fg full"><label>API Key</label><input id="prune-cloud-apikey" type="password" placeholder="sk-..."></div>
               <div class="fg full" id="prune-cloud-baseurl-row" style="display:none">
                 <label>Base URL</label><input id="prune-cloud-baseurl" placeholder="https://...">
               </div>
@@ -2889,64 +2871,6 @@ async function startAutoTrain() {
   await postJob('/api/autotrain', config);
 }
 
-// ═══ CLOUD API KEY PERSISTENCE ═══════════════════════════════════════════════
-
-let _savedCloudKeys = {};  // {provider: apiKey} — loaded from backend on startup
-
-// Fill the API key input for a given prefix+provider if a saved key exists
-function _fillSavedKey(prefix, provider) {
-  const keyEl = document.getElementById(prefix === 'prune' ? 'prune-cloud-apikey' : prefix + '-cloud-apikey');
-  if (!keyEl || !provider) return;
-  if (_savedCloudKeys[provider]) {
-    keyEl.value = _savedCloudKeys[provider];
-  }
-}
-
-// Save a cloud API key to disk via backend
-async function saveCloudKey(prefix, provider) {
-  const keyId  = prefix === 'prune' ? 'prune-cloud-apikey' : prefix + '-cloud-apikey';
-  const provId = prefix === 'prune' ? 'prune-adv-provider' : prefix + '-cloud-provider';
-  const keyEl  = document.getElementById(keyId);
-  const prov   = provider || document.getElementById(provId)?.value;
-  const key    = keyEl?.value?.trim();
-  if (!prov)  { toast('Select a provider first', 'error'); return; }
-  if (!key)   { toast('Enter an API key to save', 'error'); return; }
-  try {
-    const r = await fetch('/api/cloud/keys/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: prov, api_key: key }),
-    });
-    const d = await r.json();
-    if (d.ok) {
-      _savedCloudKeys[prov] = key;
-      toast(`✅ Saved ${prov} key`, 'success');
-    } else {
-      toast('Save failed: ' + d.error, 'error');
-    }
-  } catch(e) {
-    toast('Save error: ' + e, 'error');
-  }
-}
-
-// Load all saved keys from backend on startup
-async function _loadCloudKeys() {
-  try {
-    const r = await fetch('/api/cloud/keys/load');
-    const d = await r.json();
-    if (d.ok && d.keys) {
-      _savedCloudKeys = d.keys;
-      // Pre-fill any currently shown provider
-      ['d','gd','wd'].forEach(prefix => {
-        const provEl = document.getElementById(prefix + '-cloud-provider');
-        if (provEl) _fillSavedKey(prefix, provEl.value);
-      });
-      const pruneEl = document.getElementById('prune-adv-provider');
-      if (pruneEl) _fillSavedKey('prune', pruneEl.value);
-    }
-  } catch(e) {}
-}
-
 // ═══ DISTILLATION CLOUD PROVIDER ═════════════════════════════════════════════
 
 let _distSource = 'local'; // 'local' | 'cloud'
@@ -2955,7 +2879,6 @@ let _distSource = 'local'; // 'local' | 'cloud'
 const CLOUD_PRESETS = {
   google:      { model: 'gemini-2.0-flash',               base: 'https://generativelanguage.googleapis.com/v1beta/openai', priceIn: 0.10,  priceOut: 0.40  },
   perplexity:  { model: 'pro-search',                      base: 'https://api.perplexity.ai/v1/responses', priceIn: 3.00,  priceOut: 15.00, agentApi: true  },
-  openrouter:  { model: 'openai/gpt-4o-mini',              base: 'https://openrouter.ai/api/v1',           priceIn: 0.15,  priceOut: 0.60  },
   custom:      { model: '',                               base: '',                                priceIn: 1.00,  priceOut: 3.00  },
 };
 
@@ -3111,10 +3034,9 @@ function onCloudProviderChange() {
   resetModelSelector('d');
   if (modelEl && !modelEl._userEdited) modelEl.value = preset.model;
   if (baseEl)  baseEl.value  = applyAgentApiPatch(preset, provider);
-  if (baseRow) baseRow.style.display = (provider === 'custom' || provider === 'openrouter') ? '' : 'none';
+  if (baseRow) baseRow.style.display = provider === 'custom' ? '' : 'none';
   if (priceIn)  priceIn.value  = preset.priceIn;
   if (priceOut) priceOut.value = preset.priceOut;
-  _fillSavedKey('d', provider);
   updateCloudCostEstimate();
 }
 
@@ -3156,8 +3078,6 @@ if (_cloudModelEl) _cloudModelEl.addEventListener('input', () => { _cloudModelEl
 
 // Init with openai preset defaults
 onCloudProviderChange();
-// Load saved cloud API keys from backend
-_loadCloudKeys();
 
 async function startDistill() {
   const rawPrompts = v('d-custprompts').trim();
@@ -3228,10 +3148,9 @@ function onGdProviderChange() {
   resetModelSelector('gd');
   if (modelEl && !modelEl._userEdited) modelEl.value = preset.model;
   if (baseEl)  baseEl.value  = applyAgentApiPatch(preset, provider);
-  if (baseRow) baseRow.style.display = (provider === 'custom' || provider === 'openrouter') ? '' : 'none';
+  if (baseRow) baseRow.style.display = provider === 'custom' ? '' : 'none';
   if (priceIn)  priceIn.value  = preset.priceIn;
   if (priceOut) priceOut.value = preset.priceOut;
-  _fillSavedKey('gd', provider);
   updateGdCostEstimate();
 }
 
@@ -3329,25 +3248,17 @@ function onWdProviderChange() {
   const p = document.getElementById('wd-cloud-provider').value;
   const buRow  = document.getElementById('wd-cloud-baseurl-row');
   const pxNote = document.getElementById('wd-perplexity-note');
-  buRow.style.display  = (p === 'custom' || p === 'openrouter') ? '' : 'none';
+  buRow.style.display  = (p === 'custom') ? '' : 'none';
   pxNote.style.display = (p === 'perplexity') ? '' : 'none';
   const models = {
     openai:      'gpt-4o-mini',
     google:      'gemini-2.0-flash',
     anthropic:   'claude-3-5-haiku-20241022',
     perplexity:  'pro-search',
-    openrouter:  'openai/gpt-4o-mini',
     custom:      '',
   };
-  const bases = {
-    openrouter: 'https://openrouter.ai/api/v1',
-  };
   const modelEl = document.getElementById('wd-cloud-model');
-  const baseEl  = document.getElementById('wd-cloud-baseurl');
   if (!modelEl._userEdited) modelEl.value = models[p] || '';
-  if (baseEl && bases[p]) baseEl.value = bases[p];
-  // Restore saved key for this provider if available
-  _fillSavedKey('wd', p);
 }
 
 document.getElementById('wd-cloud-model')?.addEventListener('input', function() { this._userEdited = true; });
@@ -5798,8 +5709,7 @@ function onPruneAdvisorProviderChange() {
   const baseRow  = document.getElementById('prune-cloud-baseurl-row');
   resetModelSelector('prune');
   if (modelEl && !modelEl._userEdited) modelEl.value = preset.model;
-  if (baseRow) baseRow.style.display = (provider === 'custom' || provider === 'openrouter') ? '' : 'none';
-  _fillSavedKey('prune', provider);
+  if (baseRow) baseRow.style.display = provider === 'custom' ? '' : 'none';
 }
 
 // Wire up prune-cloud-provider select (maps to prune-adv-provider internally)
@@ -5886,14 +5796,33 @@ const PERF_DEFAULTS = {
 
 let _perfConfig = { ...PERF_DEFAULTS };
 
-function _perfSave()    { try { localStorage.setItem('unsloth_perf', JSON.stringify(_perfConfig)); } catch(e) {} }
-function _perfRestore() {
+async function _perfSave() {
   try {
-    const raw = localStorage.getItem('unsloth_perf');
-    if (raw) _perfConfig = { ...PERF_DEFAULTS, ...JSON.parse(raw) };
-  } catch(e) {}
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_perfConfig),
+    });
+  } catch(e) { console.warn('Could not save perf config:', e); }
 }
-_perfRestore();
+
+async function _perfRestore() {
+  try {
+    const r = await fetch('/api/config');
+    const data = await r.json();
+    _perfConfig = { ...PERF_DEFAULTS };
+    for (const key of Object.keys(PERF_DEFAULTS)) {
+      if (data[key] !== undefined) _perfConfig[key] = data[key];
+    }
+  } catch(e) { console.warn('Could not load perf config:', e); }
+}
+
+// Load config from server on startup then apply to UI
+_perfRestore().then(() => {
+  _syncPerfUI();
+  _applyPerfDefaults();
+  _refreshPerfNavBadge();
+});
 
 // Toggle switch visual rendering
 function _renderToggle(key, on) {
@@ -5959,11 +5888,11 @@ function _syncPerfUI() {
 }
 
 // Save button on perf config page
-function savePerfConfig() {
+async function savePerfConfig() {
   _perfConfig.default_batch  = parseInt(document.getElementById('perf-default-batch')?.value)  || 2;
   _perfConfig.default_ga     = parseInt(document.getElementById('perf-default-ga')?.value)     || 4;
   _perfConfig.default_seqlen = parseInt(document.getElementById('perf-default-seqlen')?.value) || 2048;
-  _perfSave();
+  await _perfSave();
   _applyPerfDefaults();
   toast('Performance settings saved!', 'success');
 }
@@ -6074,8 +6003,6 @@ togglePerfSwitch = function(key) {
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
-_syncPerfUI();
-_applyPerfDefaults();
 _refreshPerfNavBadge();
 
 </script>
