@@ -1,5 +1,5 @@
 {
-  "base_data_dir": "~/unsloth_data",
+  "base_data_dir": "./unsloth",
   "host": "0.0.0.0",
   "port": 5000,
   "debug": false,
