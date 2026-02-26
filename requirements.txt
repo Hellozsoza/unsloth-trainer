@@ -1,0 +1,28 @@
+# Unsloth Fine-Tuning UI - Requirements
+#
+# ── Step 1: Install PyTorch for CUDA 13.x (cu130 is the highest available index) ──
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+#
+# ── Step 2: Install Unsloth matching your torch + CUDA versions ──
+#   Torch 2.10 + CUDA 13.0:  pip install "unsloth[cu130-torch2100] @ git+https://github.com/unslothai/unsloth.git"
+#   Torch 2.9  + CUDA 13.0:  pip install "unsloth[cu130-torch290]  @ git+https://github.com/unslothai/unsloth.git"
+#   (or simply: pip install unsloth  — it will auto-detect versions)
+#
+# ── Step 3: Install the rest ──
+#   pip install -r requirements.txt
+
+flask>=2.3.0
+transformers>=4.36.0
+datasets>=2.16.0
+huggingface_hub>=0.20.0
+trl>=0.7.0
+peft>=0.7.0
+accelerate>=0.25.0
+bitsandbytes>=0.41.0
+xformers
+triton
+
+# Flash Attention 2 (optional but recommended — fixes OOM on FlexAttention fallback)
+# Only install after PyTorch is working. If prebuilt wheel is unavailable for your
+# exact torch/CUDA combo, skip this and rely on xformers above instead.
+#   pip install flash-attn --no-build-isolation

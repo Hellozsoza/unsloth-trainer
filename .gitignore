@@ -1,0 +1,16 @@
+# Personal config (copy config.example.json → config.json and edit)
+config.json
+
+# Saved credentials
+.hf_token
+.cloud_keys
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+unsloth/
+
+# Unsloth compiled cache
+unsloth_compiled_cache/
