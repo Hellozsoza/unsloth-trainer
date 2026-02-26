@@ -11,6 +11,9 @@ import random
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 
+# ─── Disable torch.compile (fixes Phi-4 LongRoPE + dynamo crash) ─────────────
+os.environ["TORCHDYNAMO_DISABLE"] = "1"
+os.environ["UNSLOTH_COMPILE_DISABLE"] = "1"
 app = Flask(__name__)
 
 # ─── Global state ─────────────────────────────────────────────────────────────
@@ -26,77 +29,19 @@ _active_threads   = []          # all background threads we can try to kill
 _download_dirs    = []          # partial download dirs to clean up on stop
 _monitor_events   = []          # monitor/pulse threading.Events to stop
 
-# ─── Config file ──────────────────────────────────────────────────────────────
-_REPO_DIR    = Path(__file__).parent
-_CONFIG_FILE = _REPO_DIR / "config.json"
-_CONFIG_EXAMPLE = _REPO_DIR / "config.example.json"
-
-CONFIG_DEFAULTS = {
-    # Paths
-    "base_data_dir": str(Path.home() / "unsloth_data"),
-    # Server
-    "host":  "0.0.0.0",
-    "port":  5000,
-    "debug": False,
-    # Training performance defaults
-    "low_memory_mode": False,
-    "speed_mode":      False,
-    "stream_dataset":  False,
-    "default_batch":   2,
-    "default_ga":      4,
-    "default_seqlen":  2048,
-    # Torch / Unsloth flags
-    "disable_torchdynamo":    True,
-    "disable_unsloth_compile": True,
-    "use_xformers":           False,
-}
-
-# Write config.example.json if missing
-if not _CONFIG_EXAMPLE.exists():
-    _CONFIG_EXAMPLE.write_text(json.dumps(CONFIG_DEFAULTS, indent=2) + "\n")
-    print(f"[INFO] Created config.example.json — copy it to config.json to customise.")
-
-# Load config.json, fall back to defaults for any missing keys
-if _CONFIG_FILE.exists():
-    try:
-        _user_config = json.loads(_CONFIG_FILE.read_text())
-        print(f"[INFO] Loaded config.json")
-    except Exception as e:
-        print(f"[WARN] Could not parse config.json: {e} — using defaults")
-        _user_config = {}
-else:
-    print(f"[INFO] No config.json found — using defaults. Copy config.example.json to config.json to customise.")
-    _user_config = {}
-
-# Merge: user values win, missing keys fall back to defaults
-_cfg = {**CONFIG_DEFAULTS, **_user_config}
-
-def _save_config():
-    """Persist the current _cfg dict back to config.json."""
-    try:
-        _CONFIG_FILE.write_text(json.dumps(_cfg, indent=2) + "\n")
-    except Exception as e:
-        print(f"[WARN] Could not save config.json: {e}")
-
-# ─── Apply torch/unsloth env flags from config ────────────────────────────────
-if _cfg["disable_torchdynamo"]:
-    os.environ["TORCHDYNAMO_DISABLE"] = "1"
-if _cfg["disable_unsloth_compile"]:
-    os.environ["UNSLOTH_COMPILE_DISABLE"] = "1"
-if _cfg["use_xformers"]:
-    os.environ["UNSLOTH_USE_XFORMERS"] = "1"
-
 # ─── Data directories ─────────────────────────────────────────────────────────
-BASE_DATA_DIR    = Path(_cfg["base_data_dir"]).expanduser()
-MODELS_DIR       = BASE_DATA_DIR / "models"
-DATASETS_DIR     = BASE_DATA_DIR / "datasets"
-OUTPUTS_DIR      = BASE_DATA_DIR / "outputs"
-GEN_DIR          = BASE_DATA_DIR / "generated_datasets"
-CLOUD_LOGS_DIR   = BASE_DATA_DIR / "cloud_logs"
-TOKEN_FILE       = BASE_DATA_DIR / ".hf_token"
+BASE_DATA_DIR = Path("/mnt/f/unsloth")
+MODELS_DIR    = BASE_DATA_DIR / "models"
+DATASETS_DIR  = BASE_DATA_DIR / "datasets"
+OUTPUTS_DIR   = BASE_DATA_DIR / "outputs"
+GEN_DIR       = BASE_DATA_DIR / "generated_datasets"
+CLOUD_LOGS_DIR = BASE_DATA_DIR / "cloud_logs"
+CLOUD_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+CLOUD_LOGS_DIR = BASE_DATA_DIR / "cloud_logs"
+TOKEN_FILE    = BASE_DATA_DIR / ".hf_token"
 TUNING_LOGS_FILE = BASE_DATA_DIR / "tuning_logs.json"
 
-for d in [MODELS_DIR, DATASETS_DIR, OUTPUTS_DIR, GEN_DIR, CLOUD_LOGS_DIR]:
+for d in [MODELS_DIR, DATASETS_DIR, OUTPUTS_DIR, GEN_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 def _load_saved_token():
@@ -3124,26 +3069,6 @@ def hf_status():
     return jsonify({"logged_in":hf_token["value"] is not None,"username":hf_token["username"],"token_saved":TOKEN_FILE.exists()})
 
 
-# ── App Config ────────────────────────────────────────────────────────────────
-@app.route("/api/config", methods=["GET"])
-def get_config():
-    """Return the current config (safe subset — no secrets)."""
-    return jsonify({k: v for k, v in _cfg.items()})
-
-@app.route("/api/config", methods=["POST"])
-def post_config():
-    """Update one or more config values and persist to config.json."""
-    data = request.json or {}
-    allowed = set(CONFIG_DEFAULTS.keys())
-    updated = {}
-    for k, v in data.items():
-        if k in allowed:
-            _cfg[k] = v
-            updated[k] = v
-    _save_config()
-    return jsonify({"ok": True, "updated": updated})
-
-
 
 # ═══ SYSTEM RESOURCES ════════════════════════════════════════════════════════
 
@@ -4228,6 +4153,109 @@ def _zero_concept_rows(model, row_scores, named_linears, threshold_pct, compress
     }
 
 
+def _estimate_prune(model_path: str, method: str, sparsity: float) -> dict:
+    """
+    Estimate VRAM, RAM, time, and output size for a pruning job.
+    Head pruning always loads fp16 — reflect that in estimates.
+    """
+    import json as _json
+    p = Path(model_path)
+    cfg_file = p / "config.json"
+
+    # ── Parse model config for param count ────────────────────────────────────
+    params = 0
+    try:
+        cfg = _json.loads(cfg_file.read_text())
+        H  = cfg.get("hidden_size", cfg.get("n_embd", 0))
+        I  = cfg.get("intermediate_size", H * 4)
+        L  = cfg.get("num_hidden_layers", cfg.get("n_layer", 0))
+        V  = cfg.get("vocab_size", 32000)
+        heads    = cfg.get("num_attention_heads", cfg.get("n_head", 8))
+        kv_heads = cfg.get("num_key_value_heads", heads)
+        if H and L and V:
+            kv_ratio = kv_heads / max(heads, 1)
+            attn  = L * (H*H + H*H*kv_ratio*2 + H*H)
+            ffn   = L * 3 * H * I
+            emb   = V * H
+            params = attn + ffn + emb
+    except Exception:
+        pass
+
+    if params == 0:
+        try:
+            disk = sum(f.stat().st_size for f in p.rglob("*.safetensors"))
+            if disk == 0:
+                disk = sum(f.stat().st_size for f in p.rglob("*.bin"))
+            params = disk / 2
+        except Exception:
+            params = 0
+
+    if params == 0:
+        return {"ok": False, "error": "Could not determine model size"}
+
+    # ── VRAM / RAM estimates ───────────────────────────────────────────────────
+    # Head pruning: MUST load fp16 (2 bytes/param). Magnitude: can use 4-bit.
+    # Concept: uses default loader (4-bit).
+    if method == "head":
+        bytes_per_param = 2.0   # fp16
+        load_note = "fp16 (required for head pruning)"
+    else:
+        bytes_per_param = 0.55  # 4-bit
+        load_note = "4-bit"
+
+    model_gb  = round(params * bytes_per_param * 1.15 / 1e9, 2)
+    # Pruning overhead: ~15% working buffers for magnitude/head, more for concept
+    overhead  = 1.35 if method == "concept" else 1.15
+    vram_gb   = round(model_gb * overhead, 2)
+    ram_gb    = round(model_gb * 0.3, 2)   # tokenized dataset / scratch buffers in RAM
+
+    # ── Output size estimate ───────────────────────────────────────────────────
+    if method == "magnitude":
+        # Magnitude just zeros weights — file size unchanged (zeros still stored)
+        out_gb = model_gb
+        size_note = "same as input (zeros still stored; export to GGUF for real savings)"
+    elif method == "head":
+        out_gb = round(model_gb * (1 - sparsity * 0.6), 2)
+        size_note = f"~{sparsity*100:.0f}% of attention weights removed"
+    else:  # concept
+        out_gb = round(model_gb * 0.95, 2)
+        size_note = "depends on concepts + compression setting"
+
+    # ── Time estimate ──────────────────────────────────────────────────────────
+    # Rough: 1B params ≈ 8s magnitude, 15s head (fp16 norm ops), 60s concept
+    secs_per_billion = {"magnitude": 8, "head": 20, "concept": 90}
+    billions = params / 1e9
+    est_secs = round(billions * secs_per_billion.get(method, 15))
+
+    def fmt_time(s):
+        if s < 90:   return f"~{s}s"
+        if s < 3600: return f"~{s//60}m {s%60}s"
+        return f"~{s//3600}h {(s%3600)//60}m"
+
+    return {
+        "ok":         True,
+        "params_b":   round(params / 1e9, 2),
+        "load_mode":  load_note,
+        "vram_gb":    vram_gb,
+        "ram_gb":     ram_gb,
+        "out_gb":     out_gb,
+        "size_note":  size_note,
+        "est_time":   fmt_time(est_secs),
+        "est_secs":   est_secs,
+    }
+
+
+@app.route("/api/prune/estimate", methods=["POST"])
+def prune_estimate():
+    data       = request.json or {}
+    model_path = data.get("model_path", "").strip()
+    method     = data.get("method", "magnitude")
+    sparsity   = float(data.get("sparsity", 0.3))
+    if not model_path:
+        return jsonify({"ok": False, "error": "No model path"})
+    return jsonify(_estimate_prune(model_path, method, sparsity))
+
+
 def run_pruning(config):
     try:
         model_path      = config["model_path"]
@@ -4249,7 +4277,25 @@ def run_pruning(config):
 
         set_stage("Loading model")
         set_progress(5)
-        model, tok, _ = load_model_and_tokenizer(model_path)
+
+        # Head pruning requires floating-point weights — load fp16 regardless
+        # of the user's default loader setting to avoid the "Got Byte" error.
+        if method == "head":
+            emit_log("Head pruning: loading model in fp16 (required for L2 norm ops)", "info")
+            try:
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+                tok   = AutoTokenizer.from_pretrained(model_path, token=hf_token["value"])
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_path, torch_dtype=torch.float16,
+                    device_map="auto", token=hf_token["value"])
+                emit_log("Loaded in fp16 via transformers", "success")
+                _active_model["model"]     = model
+                _active_model["tokenizer"] = tok
+            except Exception as e:
+                emit_log(f"fp16 load failed ({e}), falling back to default loader", "warn")
+                model, tok, _ = load_model_and_tokenizer(model_path)
+        else:
+            model, tok, _ = load_model_and_tokenizer(model_path)
         set_progress(20)
 
         # ── Collect linear layer targets ───────────────────────────────────────
@@ -4374,6 +4420,6 @@ if __name__ == "__main__":
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
     print("╔══════════════════════════════════════════════════╗")
     print("║    🦥  Unsloth Fine-Tuning Lab  v2.0             ║")
-    print(f"║    http://localhost:{_cfg['port']}                         ║")
+    print("║    http://localhost:5000                         ║")
     print("╚══════════════════════════════════════════════════╝")
-    app.run(debug=_cfg["debug"], host=_cfg["host"], port=_cfg["port"], threaded=True)
+    app.run(debug=False, host="0.0.0.0", port=5000, threaded=True)
