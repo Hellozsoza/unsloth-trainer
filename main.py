@@ -4752,7 +4752,7 @@ def run_abliterate(config):
         output_name  = config.get("outputname") or f"abliterated_{int(time.time())}"
         out_dir      = OUTPUTS_DIR / output_name
 
-        setstage("Loading model")
+        set_stage("Loading model")
         setprogress(5)
         model, tokenizer, _ = load_model_and_tokenizer(model_path, load_in_4bit=load_in_4bit)
         model.eval()
@@ -4763,7 +4763,7 @@ def run_abliterate(config):
         harmful  = list(itertools.islice(itertools.cycle(_HARMFUL_PROMPTS),  n_prompts))
         harmless = list(itertools.islice(itertools.cycle(_HARMLESS_PROMPTS), n_prompts))
 
-        setstage("Collecting activations")
+        set_stage("Collecting activations")
 
         def collect_hs(prompts, label):
             states = []
@@ -4786,7 +4786,7 @@ def run_abliterate(config):
         harmless_hs = collect_hs(harmless, "Harmless")
         setprogress(55)
 
-        setstage("Computing refusal direction")
+        set_stage("Computing refusal direction")
         refusal_dir = harmful_hs.mean(0) - harmless_hs.mean(0)
         norm = refusal_dir.norm()
         if norm < 1e-8:
@@ -4795,7 +4795,7 @@ def run_abliterate(config):
         emit_log(f"Refusal direction computed (pre-norm magnitude: {norm:.4f})", "success")
         setprogress(60)
 
-        setstage("Projecting out refusal direction")
+        set_stage("Projecting out refusal direction")
         layer_filters = [f.strip() for f in layer_filter.split(",")] if layer_filter else []
         n_modified = 0
         for param_name, param in model.named_parameters():
@@ -4812,7 +4812,7 @@ def run_abliterate(config):
         emit_log(f"Projected out of {n_modified} matrices (threshold={threshold})", "success")
         setprogress(85)
 
-        setstage("Saving model")
+        set_stage("Saving model")
         os.makedirs(out_dir, exist_ok=True)
         model.save_pretrained(str(out_dir))
         tokenizer.save_pretrained(str(out_dir))
