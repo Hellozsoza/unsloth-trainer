@@ -4753,12 +4753,12 @@ def run_abliterate(config):
         out_dir      = OUTPUTS_DIR / output_name
 
         set_stage("Loading model")
-        setprogress(5)
+        set_progress(5)
         model, tokenizer, _ = load_model_and_tokenizer(model_path, load_in_4bit=load_in_4bit)
         model.eval()
         hidden_size = model.config.hidden_size
         emit_log(f"Model loaded | hidden_size={hidden_size}", "success")
-        setprogress(20)
+        set_progress(20)
 
         harmful  = list(itertools.islice(itertools.cycle(_HARMFUL_PROMPTS),  n_prompts))
         harmless = list(itertools.islice(itertools.cycle(_HARMLESS_PROMPTS), n_prompts))
@@ -4780,11 +4780,11 @@ def run_abliterate(config):
 
         emit_log(f"Running {n_prompts} harmful prompts...", "info")
         harmful_hs  = collect_hs(harmful,  "Harmful")
-        setprogress(40)
+        set_progress(40)
 
         emit_log(f"Running {n_prompts} harmless prompts...", "info")
         harmless_hs = collect_hs(harmless, "Harmless")
-        setprogress(55)
+        set_progress(55)
 
         set_stage("Computing refusal direction")
         refusal_dir = harmful_hs.mean(0) - harmless_hs.mean(0)
@@ -4793,7 +4793,7 @@ def run_abliterate(config):
             raise RuntimeError("Refusal direction near-zero — try more calibration prompts.")
         refusal_dir = (refusal_dir / norm).to(model.device)
         emit_log(f"Refusal direction computed (pre-norm magnitude: {norm:.4f})", "success")
-        setprogress(60)
+        set_progress(60)
 
         set_stage("Projecting out refusal direction")
         layer_filters = [f.strip() for f in layer_filter.split(",")] if layer_filter else []
@@ -4810,13 +4810,13 @@ def run_abliterate(config):
                           ).to(param.dtype)
             n_modified += 1
         emit_log(f"Projected out of {n_modified} matrices (threshold={threshold})", "success")
-        setprogress(85)
+        set_progress(85)
 
         set_stage("Saving model")
         os.makedirs(out_dir, exist_ok=True)
         model.save_pretrained(str(out_dir))
         tokenizer.save_pretrained(str(out_dir))
-        setprogress(100)
+        set_progress(100)
         current_job["status"] = "done"
         emit_log(f"Abliterated model saved -> {out_dir}", "success")
         emit_log(f"  {n_modified} matrices modified | threshold={threshold} | prompts={n_prompts}", "info")
