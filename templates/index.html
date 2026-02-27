@@ -3744,9 +3744,7 @@
             <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
               <div class="grid2">
                 <div class="fg">
-                  <label>Refusal Score Threshold
-                    <span style="font-weight:400;color:var(--dim)"> (top-% of refusal-encoding rows projected out)</span>
-                  </label>
+                  <label>Refusal Score Threshold</label>
                   <input type="range" id="abl-threshold-range" min="0.05" max="0.5" step="0.05" value="0.1"
                     oninput="document.getElementById('abl-threshold-val').textContent=Math.round(this.value*100);document.getElementById('abl-threshold').value=this.value">
                   <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:2px">
@@ -3761,9 +3759,9 @@
                 </div>
               </div>
               <div class="fg">
-                <label>Layer Filter <span style="font-size:9px;text-transform:none;font-weight:400">optional — leave blank for all</span></label>
-                <input id="abl-layer-filter" placeholder="e.g. model.layers.10, model.layers.20  (comma-separated substrings)">
-                <div class="hint">Restrict projection to layers whose name contains one of these substrings. Leave blank to apply globally.</div>
+                <label>Layer Filter <span style="font-size:9px;text-transform:none;font-weight:400">optional</span></label>
+                <input id="abl-layer-filter" placeholder="e.g. model.layers.10, model.layers.20">
+                <div class="hint">Restrict to layers whose name contains one of these substrings. Blank = all layers.</div>
               </div>
             </div>
           </div>
@@ -3795,7 +3793,7 @@
           </div>
         </div>
 
-        <!-- ═══════════════════════════════════════════════════════ MERGE PAGE -->
+<!-- ═══════════════════════════════════════════════════════ MERGE PAGE -->
         <div id="page-merge" style="display:none">
           <div class="flex">
             <div>
@@ -6941,8 +6939,8 @@
         });
       }
 
-      // ── MERGE estimation ───────────────────────────────────────────────────
-      } else if (mode === 'merge') {
+      // ── MERGE estimation ──────────────────────────────────────────────────
+      else if (mode === 'merge') {
         const rows = document.querySelectorAll('#merge-model-list .merge-model-row');
         const paths = [...rows].map(r => r.querySelector('input')?.value?.trim()).filter(Boolean);
         const basePath = document.getElementById('merge-base-path')?.value?.trim();
@@ -6957,9 +6955,7 @@
         const avgP = allInfos.length ? allInfos.reduce((s, i) => s + (i.params || 0), 0) / allInfos.length : 0;
         const L = allInfos[0]?.L || 32;
 
-        // Need to hold 2 models in fp16 simultaneously for SLERP,
-        // up to 3 for TIES/DARE (base + 2 delta vectors)
-        const simul = method === 'slerp' ? 2 : (method === 'linear' ? 2 : Math.min(paths.length + 1, 3));
+        const simul = (method === 'slerp' || method === 'linear') ? 2 : Math.min(paths.length + 1, 3);
         const vram  = Math.round(_gb(maxP, 2.0) * simul * 100) / 100;
         const ram   = Math.round((_gb(avgP, 2.0) * (simul + 1) + 2) * 100) / 100;
         const disk  = Math.round((_gb(maxP, 2.0) + 0.5) * 10) / 10;
@@ -6981,7 +6977,7 @@
 
         _showPanel('merge', { vram, vramLim: sys.vram_total_gb, ram, ramLim: sys.ram_total_gb, disk, diskLim: sys.disk_free_gb, warns, tips });
 
-      // ── ABLITERATE estimation ──────────────────────────────────────────────
+      // ── ABLITERATE estimation ─────────────────────────────────────────────
       } else if (mode === 'abl') {
         const path     = document.getElementById('abl-model')?.value?.trim();
         const fourBit  = document.getElementById('abl-4bit')?.value === 'true';
@@ -6992,22 +6988,16 @@
         const H = info?.H || 2048;
         const L = info?.L || 32;
 
-        // Model in VRAM + 2×N hidden state vectors (fp32) + one layer's projection scratch
         const modelV   = _gb(P, bpp);
         const hsBuffer = Math.round(2 * nPrompts * H * 4 / 1e9 * 100) / 100;
         const projTemp = Math.round(H * H * 4 / 1e9 * 100) / 100;
         const vram     = Math.round((modelV + hsBuffer + projTemp) * 100) / 100;
+        const ram      = Math.round((hsBuffer * 2 + projTemp * 4 + 1.5) * 100) / 100;
+        const disk     = Math.round(_gb(P, 2.0) * 10) / 10;
 
-        // CPU RAM: only the hidden-state buffers + small projection temps (model stays on GPU)
-        const ram  = Math.round((hsBuffer * 2 + projTemp * 4 + 1.5) * 100) / 100;
-
-        // Output always saved in fp16 regardless of load quant
-        const disk = Math.round(_gb(P, 2.0) * 10) / 10;
-
-        // Time: 2N forward passes (inference-only) + in-place projection + save
-        const fwdSecs  = 2 * nPrompts * (fourBit ? 0.08 : 0.05);
-        const projSecs = L * 4 * 0.03;
-        const saveSecs = _gb(P, 2.0) * 8;
+        const fwdSecs   = 2 * nPrompts * (fourBit ? 0.08 : 0.05);
+        const projSecs  = L * 4 * 0.03;
+        const saveSecs  = _gb(P, 2.0) * 8;
         const totalSecs = fwdSecs + projSecs + saveSecs;
 
         if (vram > sys.vram_total_gb)
@@ -7017,8 +7007,7 @@
         if (!fourBit && P > 7e9)
           warns.push('⚠️ Large model in fp16 — enable 4-bit to save VRAM during calibration passes.');
         if (nPrompts > 256)
-          warns.push('⚠️ >256 prompts — diminishing returns above 128; calibration will be slow.');
-
+          warns.push('⚠️ >256 calibration prompts — diminishing returns above 128; will be slow.');
         tips.push(`📊 Model: ${modelV} GB · HS buffer: ${hsBuffer} GB · proj scratch: ${projTemp} GB`);
         tips.push(`⏱️ Calibration: ~${fmtTime(fwdSecs)} · Projection: ~${fmtTime(projSecs)} · Save: ~${fmtTime(saveSecs)}`);
         tips.push(`⏱️ Total: ~${fmtTime(totalSecs)}`);
@@ -8008,45 +7997,49 @@
 
 
   
-// ════════════════════════════════════ ABLITERATE ═════════════════════════════════════
-async function startAbliterate() {
-  const model = document.getElementById('abl-model').value.trim();
-  if (!model) { toast('Enter a model path', 'error'); return; }
-  document.getElementById('abl-progress-card').style.display = '';
-  document.getElementById('abliterateBtn').disabled = true;
-  document.getElementById('abliterateBtn').textContent = 'Running…';
-  const body = {
-    modelpath:   model,
-    loadin4bit:  document.getElementById('abl-4bit').value === 'true',
-    threshold:   parseFloat(document.getElementById('abl-threshold').value),
-    nprompts:    parseInt(document.getElementById('abl-n-prompts').value),
-    layerfilter: document.getElementById('abl-layer-filter').value.trim() || null,
-    outputname:  document.getElementById('abl-outname').value.trim() || undefined,
-  };
-  try {
-    const r = await fetch('/api/abliterate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-    const d = await r.json();
-    if (!d.ok) { toast(d.error || 'Failed to start', 'error'); resetAblUI(); return; }
-    toast('Abliteration started!', 'success');
-  } catch(e) { toast('Network error: ' + e, 'error'); resetAblUI(); return; }
-  const poll = setInterval(async () => {
-    try {
-      const s = await fetch('/api/status').then(r => r.json());
-      document.getElementById('abl-progress-fill').style.width = (s.progress || 0) + '%';
-      document.getElementById('abl-stage').textContent = s.stage || '';
-      if (s.status === 'done' || s.status === 'error' || s.status === 'stopped') {
-        clearInterval(poll);
-        toast('Abliteration ' + s.status + '!', s.status === 'done' ? 'success' : 'error');
-        resetAblUI();
-      }
-    } catch(e) { clearInterval(poll); toast('Network error: ' + e, 'error'); resetAblUI(); }
-  }, 1500);
-}
-function resetAblUI() {
-  document.getElementById('abliterateBtn').disabled = false;
-  document.getElementById('abliterateBtn').textContent = 'Abliterate Model';
-}
-</script>
+    // ════════════════════════════════════ ABLITERATE ═════════════════════════
+    async function startAbliterate() {
+      const model = document.getElementById('abl-model').value.trim();
+      if (!model) { toast('Enter a model path', 'error'); return; }
+      document.getElementById('abl-progress-card').style.display = '';
+      document.getElementById('abliterateBtn').disabled = true;
+      document.getElementById('abliterateBtn').textContent = 'Running…';
+      const body = {
+        modelpath:   model,
+        loadin4bit:  document.getElementById('abl-4bit').value === 'true',
+        threshold:   parseFloat(document.getElementById('abl-threshold').value),
+        nprompts:    parseInt(document.getElementById('abl-n-prompts').value),
+        layerfilter: document.getElementById('abl-layer-filter').value.trim() || null,
+        outputname:  document.getElementById('abl-outname').value.trim() || undefined,
+      };
+      try {
+        const r = await fetch('/api/abliterate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Failed to start', 'error'); resetAblUI(); return; }
+        toast('Abliteration started!', 'success');
+      } catch(e) { toast('Network error: ' + e, 'error'); resetAblUI(); return; }
+      const poll = setInterval(async () => {
+        try {
+          const s = await fetch('/api/status').then(r => r.json());
+          document.getElementById('abl-progress-fill').style.width = (s.progress || 0) + '%';
+          document.getElementById('abl-stage').textContent = s.stage || '';
+          if (s.status === 'done' || s.status === 'error' || s.status === 'stopped') {
+            clearInterval(poll);
+            toast('Abliteration ' + s.status + '!', s.status === 'done' ? 'success' : 'error');
+            resetAblUI();
+          }
+        } catch(e) { clearInterval(poll); toast('Network error: ' + e, 'error'); resetAblUI(); }
+      }, 1500);
+    }
+    function resetAblUI() {
+      document.getElementById('abliterateBtn').disabled = false;
+      document.getElementById('abliterateBtn').textContent = 'Abliterate Model';
+    }
+  </script>
 </body>
 
 </html>

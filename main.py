@@ -674,7 +674,6 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
                     "PhiForCausalLM":     "phi",        "Phi3ForCausalLM":       "phi3",
                     "Qwen2ForCausalLM":   "qwen2",      "GPT2LMHeadModel":       "gpt2",
                     "GPTNeoXForCausalLM": "gpt_neox",   "FalconForCausalLM":     "falcon",
-                    # MoE architectures
                     "MixtralForCausalLM":       "mixtral",
                     "Qwen2MoeForCausalLM":      "qwen2_moe",
                     "DeepseekV2ForCausalLM":    "deepseek_v2",
@@ -757,14 +756,11 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
     raise RuntimeError(f"All loading methods failed for '{model_name}'.\n{error_summary}")
 
 def _get_lora_target_modules(model):
-    """Auto-detect LoRA target modules including MoE expert projection layers.
-    Works for dense models (LLaMA, Mistral, Gemma, Phi, Qwen2…) and MoE models
-    (Mixtral, Qwen2-MoE, DeepSeek-V2/V3, OLMoE, Jamba, PhiMoE…)."""
+    """Auto-detect LoRA target modules including MoE expert projection layers."""
     all_leaf = {name.split(".")[-1] for name, _ in model.named_modules()}
     base = ["q_proj", "k_proj", "v_proj", "o_proj"]
     for m in ["gate_proj", "up_proj", "down_proj", "fc1", "fc2"]:
         if m in all_leaf: base.append(m)
-    # MoE expert projection names
     for m in ["w1", "w2", "w3", "shared_expert_gate"]:
         if m in all_leaf: base.append(m)
     seen, result = set(), []
@@ -776,8 +772,7 @@ def _get_lora_target_modules(model):
 
 def apply_lora(model, r=16, alpha=16, dropout=0.0):
     """Apply LoRA — tries FastModel first, then FastLanguageModel, then PEFT directly.
-    Auto-detects MoE expert projection layers so Mixtral, Qwen2-MoE, DeepSeek etc.
-    are fine-tuned correctly without manual configuration."""
+    Auto-detects MoE expert projection layers (w1/w2/w3) for Mixtral, Qwen2-MoE, etc."""
     target_modules = _get_lora_target_modules(model)
     try:
         from unsloth import FastModel
@@ -4741,12 +4736,7 @@ _HARMLESS_PROMPTS = [
 
 
 def run_abliterate(config):
-    """Remove the refusal direction from every weight matrix in a model.
-    1. Load model & tokenizer.
-    2. Collect last-token hidden states on N harmful vs N harmless prompts.
-    3. Compute refusal_dir = mean(harmful_hs) - mean(harmless_hs), normalised.
-    4. For every W with W.shape[-1] == hidden_size:  W <- W - threshold*(W@d)*d
-    5. Save to .outputs/."""
+    """Remove the refusal direction from every weight matrix in a model."""
     try:
         import torch, gc, itertools
 
@@ -4784,11 +4774,11 @@ def run_abliterate(config):
                     emit_log(f"{label}: {i+1}/{len(prompts)}", "info")
             return torch.stack(states)
 
-        emit_log(f"Running {n_prompts} harmful prompts…", "info")
+        emit_log(f"Running {n_prompts} harmful prompts...", "info")
         harmful_hs = collect_hs(harmful, "Harmful")
         setprogress(40)
 
-        emit_log(f"Running {n_prompts} harmless prompts…", "info")
+        emit_log(f"Running {n_prompts} harmless prompts...", "info")
         harmless_hs = collect_hs(harmless, "Harmless")
         setprogress(55)
 
@@ -4796,8 +4786,7 @@ def run_abliterate(config):
         refusal_dir = harmful_hs.mean(0) - harmless_hs.mean(0)
         norm = refusal_dir.norm()
         if norm < 1e-8:
-            raise RuntimeError(
-                "Refusal direction has near-zero norm — try more calibration prompts.")
+            raise RuntimeError("Refusal direction near-zero — try more calibration prompts.")
         refusal_dir = (refusal_dir / norm).to(model.device)
         emit_log(f"Refusal direction computed (pre-norm magnitude: {norm:.4f})", "success")
         setprogress(60)
@@ -4822,9 +4811,8 @@ def run_abliterate(config):
         tokenizer.save_pretrained(str(out_dir))
         setprogress(100)
         current_job["status"] = "done"
-        emit_log(f"✓ Abliterated model saved → {out_dir}", "success")
+        emit_log(f"Abliterated model saved -> {out_dir}", "success")
         emit_log(f"  {n_modified} matrices modified | threshold={threshold} | prompts={n_prompts}", "info")
-        emit_log(f"  Load in Chat or Fine-Tune: {out_dir}", "info")
 
     except KeyboardInterrupt:
         current_job["status"] = "stopped"
