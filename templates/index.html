@@ -1408,6 +1408,8 @@
         </div>
         <div class="nav-item" onclick="showPage('autodistill')" id="nav-autodistill"> <span class="ni">🎯</span>
           AutoDistill</div>
+        <div class="nav-item" onclick="showPage('merge')" id="nav-merge"> <span class="ni">🔀</span> Merge</div>
+        <div class="nav-item" onclick="showPage('abliterate')" id="nav-abliterate"> <span class="ni">🔓</span> Abliterate</div>
         <div class="nav-sect">Data</div>
         <div class="nav-item" onclick="showPage('gendata')" id="nav-gendata"> <span class="ni">✍️</span> AI Dataset Gen
         </div>
@@ -1430,7 +1432,6 @@
         <div class="nav-item" onclick="showPage('optimize')" id="nav-optimize"> <span class="ni">⚡</span> Optimize</div>
         <div class="nav-item" onclick="showPage('prune')" id="nav-prune"> <span class="ni">✂️</span> Prune</div>
         <div class="nav-sect">System</div>
-        <div class="nav-item" onclick="showPage('merge')" id="nav-merge"> <span class="ni">🔀</span> Merge</div>
         <div class="nav-item" onclick="showPage('perfconfig')" id="nav-perfconfig"><span class="ni">⚙️</span>
           Performance</div>
         <div class="nav-divider"></div>
@@ -3691,6 +3692,92 @@
         </div>
 
         <!-- ═══ PERFORMANCE CONFIG PAGE ═══ -->
+        <!-- ═══════════════════════════════════════════════════════ ABLITERATE PAGE -->
+        <div id="page-abliterate" style="display:none">
+          <div class="flex">
+            <div>
+              <div class="page-title">Abliterate</div>
+              <div class="page-sub">Remove refusal behaviour (decensor) from a model</div>
+            </div>
+            <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+              <button class="btn btn-primary" id="abliterateBtn" onclick="startAbliterate()">Abliterate Model</button>
+            </div>
+          </div>
+          <div class="card" style="border-color:rgba(245,158,11,.25);background:rgba(245,158,11,.04)">
+            <div class="card-body" style="font-size:12px;color:var(--dim);line-height:1.7">
+              <b>How it works:</b> Abliteration finds the "refusal direction" in the model's residual stream by comparing
+              activations on harmful vs harmless prompts, then projects that direction out of all weight matrices —
+              removing the learned refusal behaviour without any fine-tuning. The original model is unchanged; output is
+              saved to <code>.outputs/</code>.
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">Model</div>
+            <div class="card-body grid2">
+              <div class="fg full">
+                <label>Model Path <span style="font-size:9px;text-transform:none">(safetensors, not GGUF)</span></label>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <input id="abl-model" placeholder=".models/Llama-3.2-3B-Instruct" style="flex:1">
+                  <button class="btn btn-secondary btn-sm" onclick="openModelPicker('abl-model')" style="white-space:nowrap">Browse</button>
+                </div>
+                <div class="hint">Must be a safetensors model. GGUF is inference-only and cannot be abliterated.</div>
+              </div>
+              <div class="fg">
+                <label>4-bit Quantization</label>
+                <select id="abl-4bit">
+                  <option value="true">Enabled (saves VRAM)</option>
+                  <option value="false">Disabled (fp16)</option>
+                </select>
+              </div>
+              <div class="fg">
+                <label>Output Name <span style="font-size:9px;text-transform:none;font-weight:400">optional</span></label>
+                <input id="abl-outname" placeholder="auto">
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">Abliteration Settings</div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+              <div class="grid2">
+                <div class="fg">
+                  <label>Refusal Score Threshold
+                    <span style="font-weight:400;color:var(--dim)"> (top-% of refusal-encoding rows projected out)</span>
+                  </label>
+                  <input type="range" id="abl-threshold-range" min="0.05" max="0.5" step="0.05" value="0.1"
+                    oninput="document.getElementById('abl-threshold-val').textContent=Math.round(this.value*100);document.getElementById('abl-threshold').value=this.value">
+                  <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:2px">
+                    <span>5% surgical</span><b id="abl-threshold-val" style="color:var(--accent3)">10</b><span>50% aggressive</span>
+                  </div>
+                  <input type="hidden" id="abl-threshold" value="0.1">
+                </div>
+                <div class="fg">
+                  <label>Calibration Prompts</label>
+                  <input type="number" id="abl-n-prompts" value="64" min="16" max="512" step="16">
+                  <div class="hint">More = better direction estimate. 64 is a good default.</div>
+                </div>
+              </div>
+              <div class="fg">
+                <label>Layer Filter <span style="font-size:9px;text-transform:none;font-weight:400">optional — leave blank for all</span></label>
+                <input id="abl-layer-filter" placeholder="e.g. model.layers.10, model.layers.20  (comma-separated substrings)">
+                <div class="hint">Restrict projection to layers whose name contains one of these substrings. Leave blank to apply globally.</div>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="border-color:rgba(239,68,68,.25);background:rgba(239,68,68,.04)">
+            <div class="card-body" style="font-size:12px;color:var(--dim)">
+              <b>Abliteration is irreversible on the saved copy</b> — always keep a backup of the original model.
+              Quality on normal tasks is generally preserved, but thresholds &gt;30% may degrade coherence.
+            </div>
+          </div>
+          <div class="card" id="abl-progress-card" style="display:none">
+            <div class="card-header">Progress</div>
+            <div class="card-body">
+              <div class="prog-wrap h8"><div class="prog-bar" id="abl-progress-fill" style="width:0"></div></div>
+              <div id="abl-stage" style="margin-top:8px;color:var(--hint);font-size:13px"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- ═══════════════════════════════════════════════════════ MERGE PAGE -->
         <div id="page-merge" style="display:none">
           <div class="flex">
@@ -7804,7 +7891,46 @@
 
 
 
-  </script>
+  
+// ═══════════════════════════════════ ABLITERATE ════════════════════════════════════
+async function startAbliterate() {
+  const model = document.getElementById('abl-model').value.trim();
+  if (!model) { toast('Enter a model path', 'error'); return; }
+  document.getElementById('abl-progress-card').style.display = '';
+  document.getElementById('abliterateBtn').disabled = true;
+  document.getElementById('abliterateBtn').textContent = 'Running…';
+  const body = {
+    modelpath:   model,
+    loadin4bit:  document.getElementById('abl-4bit').value === 'true',
+    threshold:   parseFloat(document.getElementById('abl-threshold').value),
+    nprompts:    parseInt(document.getElementById('abl-n-prompts').value),
+    layerfilter: document.getElementById('abl-layer-filter').value.trim() || null,
+    outputname:  document.getElementById('abl-outname').value.trim() || undefined,
+  };
+  try {
+    const r = await fetch('/api/abliterate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const d = await r.json();
+    if (!d.ok) { toast(d.error || 'Failed to start', 'error'); resetAblUI(); return; }
+    toast('Abliteration started!', 'success');
+  } catch(e) { toast('Network error: ' + e, 'error'); resetAblUI(); return; }
+  const poll = setInterval(async () => {
+    try {
+      const s = await fetch('/api/status').then(r => r.json());
+      document.getElementById('abl-progress-fill').style.width = (s.progress || 0) + '%';
+      document.getElementById('abl-stage').textContent = s.stage || '';
+      if (s.status === 'done' || s.status === 'error' || s.status === 'stopped') {
+        clearInterval(poll);
+        toast('Abliteration ' + s.status + '!', s.status === 'done' ? 'success' : 'error');
+        resetAblUI();
+      }
+    } catch(e) { clearInterval(poll); toast('Network error: ' + e, 'error'); resetAblUI(); }
+  }, 1500);
+}
+function resetAblUI() {
+  document.getElementById('abliterateBtn').disabled = false;
+  document.getElementById('abliterateBtn').textContent = 'Abliterate Model';
+}
+</script>
 </body>
 
 </html>

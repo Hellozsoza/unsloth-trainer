@@ -12,6 +12,8 @@ __pycache__/
 .env
 unsloth/
 venv/
+index.html:Zone.Identifier
+main.py:Zone.Identifier
 
 # Unsloth compiled cache
 unsloth_compiled_cache/
