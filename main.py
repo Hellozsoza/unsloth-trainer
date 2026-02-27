@@ -4153,109 +4153,6 @@ def _zero_concept_rows(model, row_scores, named_linears, threshold_pct, compress
     }
 
 
-def _estimate_prune(model_path: str, method: str, sparsity: float) -> dict:
-    """
-    Estimate VRAM, RAM, time, and output size for a pruning job.
-    Head pruning always loads fp16 — reflect that in estimates.
-    """
-    import json as _json
-    p = Path(model_path)
-    cfg_file = p / "config.json"
-
-    # ── Parse model config for param count ────────────────────────────────────
-    params = 0
-    try:
-        cfg = _json.loads(cfg_file.read_text())
-        H  = cfg.get("hidden_size", cfg.get("n_embd", 0))
-        I  = cfg.get("intermediate_size", H * 4)
-        L  = cfg.get("num_hidden_layers", cfg.get("n_layer", 0))
-        V  = cfg.get("vocab_size", 32000)
-        heads    = cfg.get("num_attention_heads", cfg.get("n_head", 8))
-        kv_heads = cfg.get("num_key_value_heads", heads)
-        if H and L and V:
-            kv_ratio = kv_heads / max(heads, 1)
-            attn  = L * (H*H + H*H*kv_ratio*2 + H*H)
-            ffn   = L * 3 * H * I
-            emb   = V * H
-            params = attn + ffn + emb
-    except Exception:
-        pass
-
-    if params == 0:
-        try:
-            disk = sum(f.stat().st_size for f in p.rglob("*.safetensors"))
-            if disk == 0:
-                disk = sum(f.stat().st_size for f in p.rglob("*.bin"))
-            params = disk / 2
-        except Exception:
-            params = 0
-
-    if params == 0:
-        return {"ok": False, "error": "Could not determine model size"}
-
-    # ── VRAM / RAM estimates ───────────────────────────────────────────────────
-    # Head pruning: MUST load fp16 (2 bytes/param). Magnitude: can use 4-bit.
-    # Concept: uses default loader (4-bit).
-    if method == "head":
-        bytes_per_param = 2.0   # fp16
-        load_note = "fp16 (required for head pruning)"
-    else:
-        bytes_per_param = 0.55  # 4-bit
-        load_note = "4-bit"
-
-    model_gb  = round(params * bytes_per_param * 1.15 / 1e9, 2)
-    # Pruning overhead: ~15% working buffers for magnitude/head, more for concept
-    overhead  = 1.35 if method == "concept" else 1.15
-    vram_gb   = round(model_gb * overhead, 2)
-    ram_gb    = round(model_gb * 0.3, 2)   # tokenized dataset / scratch buffers in RAM
-
-    # ── Output size estimate ───────────────────────────────────────────────────
-    if method == "magnitude":
-        # Magnitude just zeros weights — file size unchanged (zeros still stored)
-        out_gb = model_gb
-        size_note = "same as input (zeros still stored; export to GGUF for real savings)"
-    elif method == "head":
-        out_gb = round(model_gb * (1 - sparsity * 0.6), 2)
-        size_note = f"~{sparsity*100:.0f}% of attention weights removed"
-    else:  # concept
-        out_gb = round(model_gb * 0.95, 2)
-        size_note = "depends on concepts + compression setting"
-
-    # ── Time estimate ──────────────────────────────────────────────────────────
-    # Rough: 1B params ≈ 8s magnitude, 15s head (fp16 norm ops), 60s concept
-    secs_per_billion = {"magnitude": 8, "head": 20, "concept": 90}
-    billions = params / 1e9
-    est_secs = round(billions * secs_per_billion.get(method, 15))
-
-    def fmt_time(s):
-        if s < 90:   return f"~{s}s"
-        if s < 3600: return f"~{s//60}m {s%60}s"
-        return f"~{s//3600}h {(s%3600)//60}m"
-
-    return {
-        "ok":         True,
-        "params_b":   round(params / 1e9, 2),
-        "load_mode":  load_note,
-        "vram_gb":    vram_gb,
-        "ram_gb":     ram_gb,
-        "out_gb":     out_gb,
-        "size_note":  size_note,
-        "est_time":   fmt_time(est_secs),
-        "est_secs":   est_secs,
-    }
-
-
-@app.route("/api/prune/estimate", methods=["POST"])
-def prune_estimate():
-    data       = request.json or {}
-    model_path = data.get("model_path", "").strip()
-    method     = data.get("method", "magnitude")
-    sparsity   = float(data.get("sparsity", 0.3))
-    if not model_path:
-        return jsonify({"ok": False, "error": "No model path"})
-    return jsonify(_estimate_prune(model_path, method, sparsity))
-
-
 def run_pruning(config):
     try:
         model_path      = config["model_path"]
@@ -4277,25 +4174,7 @@ def run_pruning(config):
 
         set_stage("Loading model")
         set_progress(5)
-
-        # Head pruning requires floating-point weights — load fp16 regardless
-        # of the user's default loader setting to avoid the "Got Byte" error.
-        if method == "head":
-            emit_log("Head pruning: loading model in fp16 (required for L2 norm ops)", "info")
-            try:
-                from transformers import AutoModelForCausalLM, AutoTokenizer
-                tok   = AutoTokenizer.from_pretrained(model_path, token=hf_token["value"])
-                model = AutoModelForCausalLM.from_pretrained(
-                    model_path, torch_dtype=torch.float16,
-                    device_map="auto", token=hf_token["value"])
-                emit_log("Loaded in fp16 via transformers", "success")
-                _active_model["model"]     = model
-                _active_model["tokenizer"] = tok
-            except Exception as e:
-                emit_log(f"fp16 load failed ({e}), falling back to default loader", "warn")
-                model, tok, _ = load_model_and_tokenizer(model_path)
-        else:
-            model, tok, _ = load_model_and_tokenizer(model_path)
+        model, tok, _ = load_model_and_tokenizer(model_path)
         set_progress(20)
 
         # ── Collect linear layer targets ───────────────────────────────────────
@@ -4414,6 +4293,373 @@ def run_pruning(config):
         current_job["status"] = "error"
         emit_log(f"Error: {e}", "error")
         emit_log(traceback.format_exc(), "error")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JOB: MODEL MERGING  (SLERP / TIES / DARE / Linear)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _load_state_dict_cpu(model_path, token=None):
+    """Load a model's state dict entirely on CPU as float32 for merging arithmetic."""
+    import torch
+    from transformers import AutoModelForCausalLM
+    emit_log(f"Loading weights: {Path(model_path).name}", "info")
+    m = AutoModelForCausalLM.from_pretrained(
+        model_path, torch_dtype=torch.float32,
+        device_map="cpu", token=token, low_cpu_mem_usage=True)
+    sd = {k: v.clone() for k, v in m.state_dict().items()}
+    del m
+    gc.collect()
+    return sd
+
+
+def _slerp(t, v0, v1, eps=1e-8):
+    """
+    Spherical linear interpolation between two flat tensors.
+    t=0 → v0, t=1 → v1.
+    Falls back to linear lerp when vectors are nearly parallel.
+    """
+    import torch
+    n0 = v0.norm(dtype=torch.float32)
+    n1 = v1.norm(dtype=torch.float32)
+    if n0 < eps or n1 < eps:
+        return (1 - t) * v0 + t * v1
+    u0 = v0 / n0
+    u1 = v1 / n1
+    dot = torch.clamp((u0 * u1).sum(), -1.0, 1.0)
+    if dot.abs() > 1 - eps:           # nearly parallel — linear fallback
+        return (1 - t) * v0 + t * v1
+    theta = dot.acos()
+    sin_t   = (t     * theta).sin()
+    sin_1_t = ((1-t) * theta).sin()
+    sin_theta = theta.sin()
+    return (sin_1_t / sin_theta) * v0 + (sin_t / sin_theta) * v1
+
+
+def _merge_slerp(sds, weights, base_sd=None):
+    """
+    SLERP merge of exactly 2 models.
+    weights[0] is ignored; weights[1] is the interpolation t (0=model0, 1=model1).
+    """
+    import torch
+    if len(sds) != 2:
+        raise ValueError("SLERP requires exactly 2 models.")
+    t   = float(weights[1]) if len(weights) > 1 else 0.5
+    sd0, sd1 = sds
+    out = {}
+    keys = list(sd0.keys())
+    for i, k in enumerate(keys):
+        v0 = sd0[k].float()
+        v1 = sd1.get(k, v0).float()
+        if v0.shape != v1.shape:
+            out[k] = v0     # shape mismatch — keep model A
+            continue
+        flat0 = v0.reshape(-1)
+        flat1 = v1.reshape(-1)
+        merged = _slerp(t, flat0, flat1).reshape(v0.shape)
+        out[k] = merged.to(v0.dtype)
+    return out
+
+
+def _merge_linear(sds, weights, base_sd=None):
+    """Weighted average: out = sum(w_i * model_i) / sum(w_i)."""
+    import torch
+    w = [float(x) for x in weights]
+    total = sum(w) or 1.0
+    keys = list(sds[0].keys())
+    out = {}
+    for k in keys:
+        acc = None
+        for sd, wi in zip(sds, w):
+            v = sd.get(k, sds[0][k]).float() * wi
+            acc = v if acc is None else acc + v
+        out[k] = (acc / total).to(sds[0][k].dtype)
+    return out
+
+
+def _merge_task_arithmetic(sds, weights, base_sd):
+    """
+    Task Arithmetic: out = base + sum(w_i * (model_i - base)).
+    Requires a base model. Each model contributes its task vector scaled by w_i.
+    """
+    import torch
+    if base_sd is None:
+        raise ValueError("Task Arithmetic requires a base model.")
+    w = [float(x) for x in weights]
+    keys = list(base_sd.keys())
+    out = {}
+    for k in keys:
+        base_v = base_sd[k].float()
+        delta_acc = torch.zeros_like(base_v)
+        for sd, wi in zip(sds, w):
+            model_v = sd.get(k, base_v).float()
+            if model_v.shape == base_v.shape:
+                delta_acc += wi * (model_v - base_v)
+        out[k] = (base_v + delta_acc).to(base_sd[k].dtype)
+    return out
+
+
+def _merge_ties(sds, weights, base_sd, density=0.5):
+    """
+    TIES merge (Trim, Elect Sign, Merge):
+      1. Trim: keep only top-density fraction of delta magnitudes per model.
+      2. Elect sign: majority vote per parameter.
+      3. Merge: average only models that agree with elected sign, scaled by weight.
+    Requires a base model.
+    """
+    import torch
+    if base_sd is None:
+        raise ValueError("TIES requires a base model.")
+    w = [float(x) for x in weights]
+    keys = list(base_sd.keys())
+    out = {}
+    for k in keys:
+        base_v = base_sd[k].float()
+        deltas = []
+        for sd, wi in zip(sds, w):
+            mv = sd.get(k, base_v).float()
+            if mv.shape != base_v.shape:
+                deltas.append(None)
+                continue
+            delta = mv - base_v
+            # Trim: zero out below-threshold magnitudes
+            flat = delta.reshape(-1)
+            if flat.numel() > 1:
+                threshold = flat.abs().quantile(1.0 - density)
+                delta = torch.where(delta.abs() >= threshold, delta, torch.zeros_like(delta))
+            deltas.append(delta * wi)
+
+        valid = [(d, wi) for d, wi in zip(deltas, w) if d is not None]
+        if not valid:
+            out[k] = base_v.to(base_sd[k].dtype)
+            continue
+
+        # Elect sign: majority vote (sum of signed deltas)
+        stacked = torch.stack([d for d, _ in valid])
+        sign_vote = stacked.sum(dim=0).sign()
+        sign_vote = torch.where(sign_vote == 0, torch.ones_like(sign_vote), sign_vote)
+
+        # Merge: average deltas that agree with elected sign
+        agreed = []
+        agreed_w = []
+        for (d, wi) in valid:
+            mask = (d.sign() == sign_vote) | (d == 0)
+            agreed.append(torch.where(mask, d, torch.zeros_like(d)))
+            agreed_w.append(wi)
+        total_w = sum(agreed_w) or 1.0
+        merged_delta = sum(a * awi / total_w for a, awi in zip(agreed, agreed_w))
+        out[k] = (base_v + merged_delta).to(base_sd[k].dtype)
+    return out
+
+
+def _merge_dare(sds, weights, base_sd, density=0.5):
+    """
+    DARE (Drop And REscale):
+      1. Compute deltas (model - base).
+      2. Randomly drop (1-density) fraction of delta elements.
+      3. Rescale remaining by 1/density to preserve expected magnitude.
+      4. Merge with weighted average of rescaled deltas.
+    """
+    import torch
+    if base_sd is None:
+        raise ValueError("DARE requires a base model.")
+    w = [float(x) for x in weights]
+    keys = list(base_sd.keys())
+    out = {}
+    torch.manual_seed(42)
+    for k in keys:
+        base_v = base_sd[k].float()
+        delta_acc = torch.zeros_like(base_v)
+        for sd, wi in zip(sds, w):
+            mv = sd.get(k, base_v).float()
+            if mv.shape != base_v.shape:
+                continue
+            delta = mv - base_v
+            # Random drop mask
+            mask = torch.bernoulli(torch.full_like(delta, density))
+            # Rescale surviving elements
+            rescaled = delta * mask / max(density, 1e-8)
+            delta_acc += wi * rescaled
+        total_w = sum(w) or 1.0
+        out[k] = (base_v + delta_acc / total_w).to(base_sd[k].dtype)
+    return out
+
+
+def run_merge_models(config):
+    try:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
+
+        method      = config.get("method", "slerp")          # slerp|linear|task_arithmetic|ties|dare
+        model_paths = config.get("models", [])               # list of paths
+        weights_raw = config.get("weights", [])              # list of floats (same length as models)
+        base_path   = config.get("base_model", "").strip()   # required for task_arithmetic/ties/dare
+        output_name = config.get("output_name") or f"merged_{method}_{int(time.time())}"
+        out_dir     = str(OUTPUTS_DIR / output_name)
+        density     = float(config.get("density", 0.5))      # TIES/DARE density
+
+        if not model_paths or len(model_paths) < 2:
+            raise ValueError("At least 2 models required for merging.")
+
+        # Pad weights to match model count, default 0.5 each
+        weights = []
+        for i, mp in enumerate(model_paths):
+            try:
+                weights.append(float(weights_raw[i]))
+            except (IndexError, TypeError, ValueError):
+                weights.append(0.5)
+
+        emit_log(f"Merge method: {method.upper()}", "info")
+        emit_log(f"Models: {[Path(p).name for p in model_paths]}", "info")
+        emit_log(f"Weights: {weights}", "info")
+        if base_path:
+            emit_log(f"Base model: {Path(base_path).name}", "info")
+
+        token = hf_token["value"]
+
+        # ── Validate architecture compatibility ────────────────────────────────
+        set_stage("Checking model compatibility")
+        set_progress(2)
+        arch_types = []
+        vocab_sizes = []
+        hidden_sizes = []
+        import json as _json
+        for mp in model_paths:
+            cfg_file = Path(mp) / "config.json"
+            if cfg_file.exists():
+                cfg = _json.loads(cfg_file.read_text())
+                arch_types.append(cfg.get("model_type", "unknown"))
+                vocab_sizes.append(cfg.get("vocab_size", 0))
+                hidden_sizes.append(cfg.get("hidden_size", cfg.get("n_embd", 0)))
+        if len(set(arch_types)) > 1:
+            emit_log(f"⚠️  Architecture mismatch: {arch_types}. Merge may fail or produce garbage.", "warn")
+        if len(set(vocab_sizes)) > 1:
+            emit_log(f"⚠️  Vocab size mismatch: {vocab_sizes}. This will likely fail.", "warn")
+        else:
+            emit_log(f"Architecture: {arch_types[0] if arch_types else 'unknown'} | "
+                     f"Vocab: {vocab_sizes[0] if vocab_sizes else '?'} | "
+                     f"Hidden: {hidden_sizes[0] if hidden_sizes else '?'}", "info")
+
+        # ── Load base model if needed ──────────────────────────────────────────
+        base_sd = None
+        if method in ("task_arithmetic", "ties", "dare"):
+            if not base_path:
+                raise ValueError(f"Method '{method}' requires a base model path.")
+            set_stage("Loading base model weights")
+            set_progress(5)
+            base_sd = _load_state_dict_cpu(base_path, token)
+            emit_log(f"Base model loaded: {len(base_sd)} tensors", "success")
+
+        # ── Load all model state dicts ─────────────────────────────────────────
+        set_stage("Loading model weights")
+        sds = []
+        n = len(model_paths)
+        for i, mp in enumerate(model_paths):
+            set_progress(5 + (i / n) * 40)
+            if stop_flag.is_set(): raise KeyboardInterrupt()
+            sd = _load_state_dict_cpu(mp, token)
+            emit_log(f"  [{i+1}/{n}] {Path(mp).name}: {len(sd)} tensors", "success")
+            sds.append(sd)
+
+        set_progress(50)
+
+        # ── Check key compatibility ────────────────────────────────────────────
+        keys0 = set(sds[0].keys())
+        for i, sd in enumerate(sds[1:], 1):
+            missing = keys0 - set(sd.keys())
+            extra   = set(sd.keys()) - keys0
+            if missing:
+                emit_log(f"Model {i+1} missing {len(missing)} keys vs model 1 — shapes may differ", "warn")
+            if extra:
+                emit_log(f"Model {i+1} has {len(extra)} extra keys vs model 1 — will be ignored", "warn")
+
+        # ── Run merge ─────────────────────────────────────────────────────────
+        set_stage(f"Merging ({method.upper()})")
+        set_progress(52)
+
+        if method == "slerp":
+            merged_sd = _merge_slerp(sds, weights, base_sd)
+        elif method == "linear":
+            merged_sd = _merge_linear(sds, weights, base_sd)
+        elif method == "task_arithmetic":
+            merged_sd = _merge_task_arithmetic(sds, weights, base_sd)
+        elif method == "ties":
+            merged_sd = _merge_ties(sds, weights, base_sd, density)
+        elif method == "dare":
+            merged_sd = _merge_dare(sds, weights, base_sd, density)
+        else:
+            raise ValueError(f"Unknown merge method: {method}")
+
+        emit_log(f"Merge complete: {len(merged_sd)} tensors", "success")
+
+        # Free source state dicts before saving
+        del sds
+        if base_sd is not None:
+            del base_sd
+        gc.collect()
+        set_progress(75)
+
+        # ── Build output model from merged weights ─────────────────────────────
+        set_stage("Saving merged model")
+        # Use model 0's config and tokenizer as the template
+        template_path = model_paths[0]
+        emit_log(f"Using config + tokenizer from: {Path(template_path).name}", "info")
+
+        # Load skeleton model (no weights) and replace state dict
+        arch_cfg = AutoConfig.from_pretrained(template_path, token=token)
+        with torch.device("meta"):
+            shell = AutoModelForCausalLM.from_config(arch_cfg)
+        shell = shell.to_empty(device="cpu")
+        # Load merged weights — strict=False to tolerate minor key differences
+        missing, unexpected = shell.load_state_dict(merged_sd, strict=False)
+        if missing:
+            emit_log(f"Missing keys after merge: {len(missing)} (may be fine for some architectures)", "warn")
+        if unexpected:
+            emit_log(f"Unexpected keys: {len(unexpected)}", "warn")
+
+        del merged_sd
+        gc.collect()
+
+        os.makedirs(out_dir, exist_ok=True)
+        shell.save_pretrained(out_dir)
+        del shell
+        gc.collect()
+        set_progress(92)
+
+        # Copy tokenizer from model 0
+        tok = AutoTokenizer.from_pretrained(template_path, token=token)
+        tok.save_pretrained(out_dir)
+
+        # Write merge metadata
+        meta = {
+            "method":      method,
+            "models":      model_paths,
+            "weights":     weights,
+            "base_model":  base_path or None,
+            "density":     density if method in ("ties","dare") else None,
+            "created":     int(time.time()),
+            "output_name": output_name,
+        }
+        with open(Path(out_dir) / "merge_config.json", "w") as f:
+            _json.dump(meta, f, indent=2)
+
+        set_progress(100)
+        current_job["status"] = "done"
+        emit_log(f"✅ Merged model saved → {out_dir}", "success")
+        emit_log(f"   Method: {method.upper()} | Models: {len(model_paths)}", "info")
+        emit_log(f"   Use in Fine-Tune or Chat: {out_dir}", "info")
+
+    except KeyboardInterrupt:
+        current_job["status"] = "stopped"; emit_log("Stopped.", "warn")
+    except Exception as e:
+        current_job["status"] = "error"
+        emit_log(f"Error: {e}", "error")
+        emit_log(traceback.format_exc(), "error")
+
+
+@app.route("/api/merge", methods=["POST"])
+def merge_models():
+    return _start_job(run_merge_models, request.json)
+
 
 if __name__ == "__main__":
     import logging

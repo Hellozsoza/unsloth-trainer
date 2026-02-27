@@ -1430,6 +1430,7 @@
         <div class="nav-item" onclick="showPage('optimize')" id="nav-optimize"> <span class="ni">⚡</span> Optimize</div>
         <div class="nav-item" onclick="showPage('prune')" id="nav-prune"> <span class="ni">✂️</span> Prune</div>
         <div class="nav-sect">System</div>
+        <div class="nav-item" onclick="showPage('merge')" id="nav-merge"> <span class="ni">🔀</span> Merge</div>
         <div class="nav-item" onclick="showPage('perfconfig')" id="nav-perfconfig"><span class="ni">⚙️</span>
           Performance</div>
         <div class="nav-divider"></div>
@@ -3495,44 +3496,12 @@
             <div class="card-body grid2">
               <div class="fg full"><label>Model Path</label>
                 <div style="display:flex;gap:8px;align-items:center">
-                  <input id="prune-model" placeholder="./outputs/my_model" style="flex:1"
-                    oninput="_debouncePruneEstimate()">
+                  <input id="prune-model" placeholder="./outputs/my_model" style="flex:1">
                   <button class="btn btn-secondary btn-sm" onclick="openModelPicker('prune-model')"
                     style="white-space:nowrap">📂 Browse</button>
                 </div>
               </div>
               <div class="fg"><label>Output Name</label><input id="prune-outname" value="my_model_pruned"></div>
-            </div>
-          </div>
-
-          <!-- Estimate panel -->
-          <div class="card" id="prune-estimate-panel"
-            style="display:none;border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.05)">
-            <div class="card-header" style="color:var(--accent3)">📊 Estimated Resource Usage</div>
-            <div class="card-body">
-              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:10px">
-                <div style="text-align:center">
-                  <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--fg)"
-                    id="prune-est-vram">—</div>
-                  <div style="font-size:10px;color:var(--dim);margin-top:2px">VRAM</div>
-                </div>
-                <div style="text-align:center;border-left:1px solid var(--border)">
-                  <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--fg)"
-                    id="prune-est-ram">—</div>
-                  <div style="font-size:10px;color:var(--dim);margin-top:2px">RAM</div>
-                </div>
-                <div style="text-align:center;border-left:1px solid var(--border)">
-                  <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--fg)"
-                    id="prune-est-time">—</div>
-                  <div style="font-size:10px;color:var(--dim);margin-top:2px">EST. TIME</div>
-                </div>
-                <div style="text-align:center;border-left:1px solid var(--border)">
-                  <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--fg)"
-                    id="prune-est-size">—</div>
-                  <div style="font-size:10px;color:var(--dim);margin-top:2px">OUTPUT SIZE</div>
-                </div>
-              </div>
-              <div style="font-size:11px;color:var(--dim)" id="prune-est-notes"></div>
             </div>
           </div>
 
@@ -3574,11 +3543,10 @@
                 <input type="radio" name="prune-method" value="head" onchange="onPruneMethodChange()"
                   style="margin-top:3px;accent-color:var(--accent)">
                 <div>
-                  <div style="font-weight:700;color:var(--fg)">🎯 Attention Head Pruning (Structured) <span class="tag"
-                      style="background:rgba(245,158,11,.15);color:var(--accent3)">Loads fp16</span></div>
+                  <div style="font-weight:700;color:var(--fg)">🎯 Attention Head Pruning (Structured)</div>
                   <div class="hint" style="margin:4px 0 0">Removes entire attention heads using structured L2 pruning on
-                    q/k/v/o projections. Produces genuinely smaller matrices. Always loads in fp16 (required for norm
-                    ops) — needs more VRAM than 4-bit. Aggressive values (&gt;40%) noticeably hurt quality.</div>
+                    q/k/v/o projections. Produces genuinely smaller matrices. Aggressive values (&gt;40%) noticeably
+                    hurt quality.</div>
                 </div>
               </label>
             </div>
@@ -3699,7 +3667,7 @@
               <div class="fg">
                 <label>Sparsity</label>
                 <input type="range" id="prune-sparsity-range" min="0.05" max="0.9" step="0.05" value="0.3"
-                  oninput="document.getElementById('prune-sparsity-val').textContent=Math.round(this.value*100)+'%'; document.getElementById('prune-sparsity').value=this.value; _debouncePruneEstimate()">
+                  oninput="document.getElementById('prune-sparsity-val').textContent=Math.round(this.value*100)+'%'; document.getElementById('prune-sparsity').value=this.value">
                 <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:2px">
                   <span>5%</span><b id="prune-sparsity-val" style="color:var(--accent3)">30%</b><span>90%</span></div>
                 <input type="hidden" id="prune-sparsity" value="0.3">
@@ -3723,6 +3691,159 @@
         </div>
 
         <!-- ═══ PERFORMANCE CONFIG PAGE ═══ -->
+        <!-- ═══════════════════════════════════════════════════════ MERGE PAGE -->
+        <div id="page-merge" style="display:none">
+          <div class="flex">
+            <div>
+              <div class="page-title">Model Merging</div>
+              <div class="page-sub">Combine multiple models into one using SLERP, TIES, DARE, or weighted averaging
+              </div>
+            </div>
+            <button class="btn btn-primary ml-auto" id="mergeBtn" onclick="startMerge()">🔀 Merge Models</button>
+          </div>
+
+          <!-- Method selector -->
+          <div class="card">
+            <div class="card-header">🧬 Merge Method</div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+
+              <label
+                style="display:flex;align-items:flex-start;gap:12px;padding:14px;border-radius:8px;border:2px solid var(--accent);background:rgba(0,229,176,.05);cursor:pointer"
+                id="merge-slerp-card">
+                <input type="radio" name="merge-method" value="slerp" checked onchange="onMergeMethodChange()"
+                  style="margin-top:3px;accent-color:var(--accent)">
+                <div>
+                  <div style="font-weight:700;color:var(--fg)">🌀 SLERP <span class="tag"
+                      style="background:rgba(0,229,176,.15);color:var(--accent)">Best Quality · 2 Models</span></div>
+                  <div class="hint" style="margin:4px 0 0">Spherical linear interpolation — preserves the geometric
+                    relationship between weight vectors. The gold standard for blending two fine-tuned models. Weight =
+                    interpolation t (0 = model A, 1 = model B, 0.5 = equal blend).</div>
+                </div>
+              </label>
+
+              <label
+                style="display:flex;align-items:flex-start;gap:12px;padding:14px;border-radius:8px;border:1px solid var(--border);cursor:pointer"
+                id="merge-ties-card">
+                <input type="radio" name="merge-method" value="ties" onchange="onMergeMethodChange()"
+                  style="margin-top:3px;accent-color:var(--accent)">
+                <div>
+                  <div style="font-weight:700;color:var(--fg)">🗳️ TIES <span class="tag">3+ Models · Needs Base</span>
+                  </div>
+                  <div class="hint" style="margin:4px 0 0">Trim, Elect Sign, Merge — resolves sign conflicts between
+                    models by majority vote before averaging. Best when merging models fine-tuned for different tasks.
+                    Requires the original base model.</div>
+                </div>
+              </label>
+
+              <label
+                style="display:flex;align-items:flex-start;gap:12px;padding:14px;border-radius:8px;border:1px solid var(--border);cursor:pointer"
+                id="merge-dare-card">
+                <input type="radio" name="merge-method" value="dare" onchange="onMergeMethodChange()"
+                  style="margin-top:3px;accent-color:var(--accent)">
+                <div>
+                  <div style="font-weight:700;color:var(--fg)">🎲 DARE <span class="tag">3+ Models · Needs Base</span>
+                  </div>
+                  <div class="hint" style="margin:4px 0 0">Drop And REscale — randomly drops redundant delta parameters
+                    and rescales the rest. Reduces interference between models. Works well when merging many fine-tunes
+                    of the same base.</div>
+                </div>
+              </label>
+
+              <label
+                style="display:flex;align-items:flex-start;gap:12px;padding:14px;border-radius:8px;border:1px solid var(--border);cursor:pointer"
+                id="merge-task-card">
+                <input type="radio" name="merge-method" value="task_arithmetic" onchange="onMergeMethodChange()"
+                  style="margin-top:3px;accent-color:var(--accent)">
+                <div>
+                  <div style="font-weight:700;color:var(--fg)">➕ Task Arithmetic <span class="tag">Needs Base</span>
+                  </div>
+                  <div class="hint" style="margin:4px 0 0">Adds scaled task vectors (model − base) to the base model.
+                    Simple and effective. Use negative weights to subtract capabilities. Requires the original base
+                    model.</div>
+                </div>
+              </label>
+
+              <label
+                style="display:flex;align-items:flex-start;gap:12px;padding:14px;border-radius:8px;border:1px solid var(--border);cursor:pointer"
+                id="merge-linear-card">
+                <input type="radio" name="merge-method" value="linear" onchange="onMergeMethodChange()"
+                  style="margin-top:3px;accent-color:var(--accent)">
+                <div>
+                  <div style="font-weight:700;color:var(--fg)">⚖️ Weighted Average <span class="tag">Simple · Any
+                      Count</span></div>
+                  <div class="hint" style="margin:4px 0 0">Plain weighted sum of all model weights. Fast but can degrade
+                    quality if models are too different. Good as a quick baseline or for nearly-identical models.</div>
+                </div>
+              </label>
+
+            </div>
+          </div>
+
+          <!-- Base model (shown for task_arithmetic / TIES / DARE) -->
+          <div class="card" id="merge-base-card" style="display:none">
+            <div class="card-header">🏛️ Base Model <span class="hint">(the original un-finetuned model all others are
+                derived from)</span></div>
+            <div class="card-body">
+              <div class="fg full">
+                <div style="display:flex;gap:8px;align-items:center">
+                  <input id="merge-base-path" placeholder="./models/Llama-3.2-1B" style="flex:1">
+                  <button class="btn btn-secondary btn-sm" onclick="openModelPicker('merge-base-path')"
+                    style="white-space:nowrap">📂 Browse</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Model list -->
+          <div class="card">
+            <div class="card-header" style="display:flex;align-items:center;gap:10px">
+              📂 Models to Merge
+              <button class="btn btn-secondary btn-sm" onclick="addMergeModel()" style="margin-left:auto">＋ Add
+                Model</button>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+              <div id="merge-model-list" style="display:flex;flex-direction:column;gap:8px"></div>
+              <div class="hint" id="merge-model-hint">Add at least 2 models. For SLERP exactly 2 are used; others
+                support more.</div>
+            </div>
+          </div>
+
+          <!-- TIES / DARE density -->
+          <div class="card" id="merge-density-card" style="display:none">
+            <div class="card-header">🎛️ Density</div>
+            <div class="card-body">
+              <label>Fraction of delta parameters to keep <span class="hint">(higher = more parameters retained, more
+                  model influence)</span></label>
+              <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+                <input type="range" id="merge-density" min="0.1" max="1.0" step="0.05" value="0.5"
+                  oninput="document.getElementById('merge-density-val').textContent=parseFloat(this.value).toFixed(2)"
+                  style="flex:1;accent-color:var(--accent)">
+                <span id="merge-density-val" style="min-width:36px;font-weight:700;color:var(--accent)">0.50</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Output settings -->
+          <div class="card">
+            <div class="card-header">💾 Output</div>
+            <div class="card-body grid2">
+              <div class="fg"><label>Output Name</label><input id="merge-outname" value="merged_model"></div>
+            </div>
+          </div>
+
+          <!-- Progress -->
+          <div class="card" id="merge-progress-card" style="display:none">
+            <div class="card-header">⏳ Progress</div>
+            <div class="card-body">
+              <div class="progress-bar">
+                <div class="progress-fill" id="merge-progress-fill" style="width:0%"></div>
+              </div>
+              <div id="merge-stage" style="margin-top:8px;color:var(--hint);font-size:13px"></div>
+            </div>
+          </div>
+
+        </div>
+
         <div id="page-perfconfig" style="display:none">
           <div class="flex">
             <div>
@@ -7248,8 +7369,6 @@
       if (conceptConfig) conceptConfig.style.display = isConcept ? '' : 'none';
       if (advisorCard) advisorCard.style.display = isConcept ? '' : 'none';
       if (generalConfig) generalConfig.style.display = isConcept ? 'none' : '';
-
-      fetchPruneEstimate();
     }
 
     function onPruneAdvisorProviderChange() {
@@ -7279,47 +7398,6 @@
       keyAlias.type = 'hidden';
       keyAlias.id = 'prune-cloud-apikey-alias';
       document.body.appendChild(keyAlias);
-    }
-
-    // ── Prune estimation ─────────────────────────────────────────────────────────
-    let _pruneEstimateTimer = null;
-
-    function _debouncePruneEstimate() {
-      clearTimeout(_pruneEstimateTimer);
-      _pruneEstimateTimer = setTimeout(fetchPruneEstimate, 600);
-    }
-
-    async function fetchPruneEstimate() {
-      const modelPath = document.getElementById('prune-model')?.value?.trim();
-      const method = document.querySelector('input[name="prune-method"]:checked')?.value || 'magnitude';
-      const sparsity = parseFloat(document.getElementById('prune-sparsity')?.value || 0.3);
-      const panel = document.getElementById('prune-estimate-panel');
-      if (!modelPath || !panel) return;
-
-      try {
-        const r = await fetch('/api/prune/estimate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model_path: modelPath, method, sparsity }),
-        });
-        const d = await r.json();
-        if (!d.ok) { panel.style.display = 'none'; return; }
-
-        document.getElementById('prune-est-vram').textContent = d.vram_gb + ' GB';
-        document.getElementById('prune-est-ram').textContent = d.ram_gb + ' GB';
-        document.getElementById('prune-est-time').textContent = d.est_time;
-        document.getElementById('prune-est-size').textContent = d.out_gb + ' GB';
-
-        const notes = [];
-        if (d.load_mode) notes.push(`⚙️ Load mode: ${d.load_mode}`);
-        if (d.size_note) notes.push(`💾 Output: ${d.size_note}`);
-        if (d.params_b) notes.push(`🔢 Parameters: ${d.params_b}B`);
-        document.getElementById('prune-est-notes').innerHTML = notes.join(' &nbsp;·&nbsp; ');
-
-        panel.style.display = '';
-      } catch (e) {
-        panel.style.display = 'none';
-      }
     }
 
     async function startPrune() {
@@ -7575,10 +7653,156 @@
       _refreshPerfNavBadge();
     };
 
-    // ── Init ─────────────────────────────────────────────────────────────────────
-    _syncPerfUI();
-    _applyPerfDefaults();
-    _refreshPerfNavBadge();
+    // ═══════════════════════════════════════════════════════════ MERGE
+    // ─── State ───────────────────────────────────────────────────────────────────
+    let _mergeModels = [];   // [{path, weight}]
+
+    function onMergeMethodChange() {
+      const method = document.querySelector('input[name="merge-method"]:checked')?.value || 'slerp';
+      const needsBase = ['task_arithmetic', 'ties', 'dare'].includes(method);
+      const needsDensity = ['ties', 'dare'].includes(method);
+      const isSlerp = method === 'slerp';
+
+      document.getElementById('merge-base-card').style.display = needsBase ? '' : 'none';
+      document.getElementById('merge-density-card').style.display = needsDensity ? '' : 'none';
+
+      // Highlight active method card
+      ['slerp', 'ties', 'dare', 'task', 'linear'].forEach(m => {
+        const card = document.getElementById(`merge-${m}-card`);
+        if (card) {
+          const isActive = card.querySelector('input')?.value === method ||
+            (m === 'task' && method === 'task_arithmetic');
+          card.style.border = isActive ? '2px solid var(--accent)' : '1px solid var(--border)';
+          card.style.background = isActive ? 'rgba(0,229,176,.05)' : '';
+        }
+      });
+
+      // Update weight labels
+      _renderMergeModelList();
+
+      // Limit to 2 for SLERP
+      if (isSlerp && _mergeModels.length > 2) {
+        _mergeModels = _mergeModels.slice(0, 2);
+        _renderMergeModelList();
+        toast('SLERP uses exactly 2 models — trimmed list', 'warn');
+      }
+      document.getElementById('merge-model-hint').textContent =
+        isSlerp ? 'SLERP requires exactly 2 models. Weight = interpolation t (0=A, 0.5=equal, 1=B).'
+          : 'Add at least 2 models. Weights control each model\'s contribution.';
+    }
+
+    function addMergeModel() {
+      const method = document.querySelector('input[name="merge-method"]:checked')?.value || 'slerp';
+      if (method === 'slerp' && _mergeModels.length >= 2) {
+        toast('SLERP supports exactly 2 models', 'warn'); return;
+      }
+      _mergeModels.push({ path: '', weight: method === 'slerp' ? 0.5 : 1.0 });
+      _renderMergeModelList();
+    }
+
+    function removeMergeModel(idx) {
+      _mergeModels.splice(idx, 1);
+      _renderMergeModelList();
+    }
+
+    function _renderMergeModelList() {
+      const method = document.querySelector('input[name="merge-method"]:checked')?.value || 'slerp';
+      const isSlerp = method === 'slerp';
+      const list = document.getElementById('merge-model-list');
+      const labels = ['Model A', 'Model B', 'Model C', 'Model D', 'Model E'];
+
+      list.innerHTML = _mergeModels.map((m, i) => `
+    <div style="display:flex;gap:8px;align-items:center;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--s1)">
+      <div style="min-width:60px;font-weight:700;color:var(--accent);font-size:13px">${labels[i] || `Model ${i + 1}`}</div>
+      <input id="merge-model-path-${i}" value="${esc(m.path)}" placeholder="./models/my_model or ./outputs/my_ft"
+        style="flex:1;min-width:0" oninput="_mergeModels[${i}].path=this.value">
+      <button class="btn btn-secondary btn-sm" style="white-space:nowrap"
+        onclick="openModelPicker('merge-model-path-${i}')">📂</button>
+      <div style="display:flex;align-items:center;gap:6px;min-width:${isSlerp ? '110px' : '90px'}">
+        <label style="font-size:12px;color:var(--hint);white-space:nowrap">${isSlerp && i === 1 ? 't=' : 'w='}</label>
+        <input type="number" min="${isSlerp ? 0 : -2}" max="${isSlerp ? 1 : 5}" step="0.05"
+          value="${m.weight}" style="width:60px;text-align:center"
+          oninput="_mergeModels[${i}].weight=parseFloat(this.value)||0">
+      </div>
+      ${_mergeModels.length > 2 ? `<button class="btn btn-sm" style="background:rgba(255,80,80,.15);color:#f55;border:1px solid rgba(255,80,80,.3)" onclick="removeMergeModel(${i})">✕</button>` : ''}
+    </div>
+  `).join('');
+
+      // Sync input values back to _mergeModels on picker selection
+      _mergeModels.forEach((_, i) => {
+        const inp = document.getElementById(`merge-model-path-${i}`);
+        if (inp) inp.addEventListener('input', () => { _mergeModels[i].path = inp.value; });
+      });
+    }
+
+    async function startMerge() {
+      // Sync DOM inputs → _mergeModels before reading
+      _mergeModels.forEach((_, i) => {
+        const inp = document.getElementById(`merge-model-path-${i}`);
+        if (inp) _mergeModels[i].path = inp.value.trim();
+      });
+
+      const method = document.querySelector('input[name="merge-method"]:checked')?.value || 'slerp';
+      const paths = _mergeModels.map(m => m.path.trim()).filter(Boolean);
+      const weights = _mergeModels.map(m => m.weight);
+
+      if (paths.length < 2) { toast('Add at least 2 model paths', 'error'); return; }
+      if (method === 'slerp' && paths.length !== 2) { toast('SLERP requires exactly 2 models', 'error'); return; }
+
+      const needsBase = ['task_arithmetic', 'ties', 'dare'].includes(method);
+      const basePath = v('merge-base-path')?.trim() || '';
+      if (needsBase && !basePath) { toast('This method requires a base model', 'error'); return; }
+
+      const config = {
+        method,
+        models: paths,
+        weights,
+        base_model: basePath || undefined,
+        output_name: v('merge-outname') || undefined,
+        density: parseFloat(document.getElementById('merge-density')?.value || '0.5'),
+      };
+
+      document.getElementById('merge-progress-card').style.display = '';
+      document.getElementById('mergeBtn').disabled = true;
+      document.getElementById('mergeBtn').textContent = '⏳ Merging…';
+
+      try {
+        const r = await fetch('/api/merge', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config)
+        });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Failed to start merge', 'error'); resetMergeUI(); return; }
+
+        // Poll progress
+        const poll = setInterval(async () => {
+          const s = await fetch('/api/status').then(r => r.json());
+          document.getElementById('merge-progress-fill').style.width = (s.progress || 0) + '%';
+          document.getElementById('merge-stage').textContent = s.stage || '';
+          if (s.status === 'done') {
+            clearInterval(poll);
+            toast('✅ Merge complete!', 'success');
+            resetMergeUI();
+          } else if (s.status === 'error' || s.status === 'stopped') {
+            clearInterval(poll);
+            toast('Merge ' + s.status, 'error');
+            resetMergeUI();
+          }
+        }, 1500);
+      } catch (e) {
+        toast('Network error: ' + e, 'error'); resetMergeUI();
+      }
+    }
+
+    function resetMergeUI() {
+      document.getElementById('mergeBtn').disabled = false;
+      document.getElementById('mergeBtn').textContent = '🔀 Merge Models';
+    }
+
+    // ── Init merge page with 2 default slots ─────────────────────────────────────
+    _mergeModels = [{ path: '', weight: 0.5 }, { path: '', weight: 0.5 }];
+    _renderMergeModelList();
+
+
 
   </script>
 </body>
