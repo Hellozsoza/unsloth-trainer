@@ -2,7 +2,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Unsloth Fine-Tuning Lab — Installer
 # ─────────────────────────────────────────────────────────────────────────────
-set -e
+# NOTE: no "set -e" — we handle errors per-step so one failure doesn't kill
+# the whole install (especially important for flash-attn OOM kills).
 
 VENV_DIR="$(pwd)/venv"
 
@@ -13,29 +14,41 @@ echo "╚═══════════════════════�
 echo ""
 
 # ── Detect CUDA version ───────────────────────────────────────────────────────
-detect_cuda() {
+detect_cuda_version() {
     if command -v nvcc &>/dev/null; then
-        nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | head -1
+        nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' | head -1
     elif command -v nvidia-smi &>/dev/null; then
-        nvidia-smi | grep -oP 'CUDA Version: \K[0-9]+\.[0-9]+' | head -1
+        nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \K[0-9]+\.[0-9]+' | head -1
     else
         echo ""
     fi
 }
 
-CUDA_VERSION=$(detect_cuda)
+# ── Detect GPU VRAM in GB ─────────────────────────────────────────────────────
+detect_vram_gb() {
+    if command -v nvidia-smi &>/dev/null; then
+        nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
+            | head -1 | awk '{printf "%d", $1/1024}'
+    else
+        echo "0"
+    fi
+}
+
+CUDA_VERSION=$(detect_cuda_version)
+VRAM_GB=$(detect_vram_gb)
 
 if [ -z "$CUDA_VERSION" ]; then
     echo "⚠️  No CUDA detected — installing CPU-only builds."
     echo "   (Training will be very slow without a GPU.)"
     CUDA_MAJOR=""
+    CUDA_MINOR=""
     TORCH_INDEX="https://download.pytorch.org/whl/cpu"
     UNSLOTH_EXTRA=""
     LLAMA_CMAKE=""
 else
     CUDA_MAJOR=$(echo "$CUDA_VERSION" | cut -d. -f1)
     CUDA_MINOR=$(echo "$CUDA_VERSION" | cut -d. -f2)
-    echo "✅ Detected CUDA $CUDA_VERSION (major: $CUDA_MAJOR)"
+    echo "✅ Detected CUDA $CUDA_VERSION  |  GPU VRAM: ${VRAM_GB}GB"
 
     if   [ "$CUDA_MAJOR" -ge 13 ]; then
         TORCH_INDEX="https://download.pytorch.org/whl/cu130"
@@ -50,12 +63,12 @@ else
         TORCH_INDEX="https://download.pytorch.org/whl/cu118"
         UNSLOTH_EXTRA="cu118-torch220"
     else
-        echo "⚠️  CUDA $CUDA_VERSION is older than 11 — falling back to CPU."
+        echo "⚠️  CUDA $CUDA_VERSION is too old — falling back to CPU."
+        CUDA_MAJOR=""
         TORCH_INDEX="https://download.pytorch.org/whl/cpu"
         UNSLOTH_EXTRA=""
-        LLAMA_CMAKE=""
     fi
-    LLAMA_CMAKE="DGGML_CUDA=on"
+    LLAMA_CMAKE="-DGGML_CUDA=on"
 fi
 
 echo ""
@@ -64,6 +77,11 @@ echo ""
 if [ ! -d "$VENV_DIR" ]; then
     echo "📦 Creating virtual environment at $VENV_DIR ..."
     python3 -m venv "$VENV_DIR"
+    if [ $? -ne 0 ]; then
+        echo "❌ Failed to create venv. Is python3-venv installed?"
+        echo "   Try: sudo apt install python3-venv"
+        exit 1
+    fi
 else
     echo "♻️  Reusing existing venv at $VENV_DIR"
 fi
@@ -73,27 +91,42 @@ pip install --upgrade pip --quiet
 
 # ── Step 1: PyTorch ───────────────────────────────────────────────────────────
 echo ""
-echo "━━━ Step 1/5: Installing PyTorch ($TORCH_INDEX) ━━━"
+echo "━━━ Step 1/5: PyTorch ━━━"
 pip install torch torchvision torchaudio --index-url "$TORCH_INDEX"
+if [ $? -ne 0 ]; then
+    echo "❌ PyTorch install failed. Aborting."
+    exit 1
+fi
 
 # ── Step 2: Unsloth ───────────────────────────────────────────────────────────
 echo ""
-echo "━━━ Step 2/5: Installing Unsloth ━━━"
+echo "━━━ Step 2/5: Unsloth ━━━"
 if [ -n "$UNSLOTH_EXTRA" ]; then
-    pip install "unsloth[$UNSLOTH_EXTRA] @ git+https://github.com/unslothai/unsloth.git" || \
-    pip install unsloth
+    pip install "unsloth[$UNSLOTH_EXTRA] @ git+https://github.com/unslothai/unsloth.git"
+    if [ $? -ne 0 ]; then
+        echo "⚠️  Versioned Unsloth install failed — trying generic install..."
+        pip install unsloth
+    fi
 else
     pip install unsloth
+fi
+if [ $? -ne 0 ]; then
+    echo "❌ Unsloth install failed. Aborting."
+    exit 1
 fi
 
 # ── Step 3: llama-cpp-python ─────────────────────────────────────────────────
 echo ""
-echo "━━━ Step 3/5: Installing llama-cpp-python ━━━"
+echo "━━━ Step 3/5: llama-cpp-python ━━━"
 if [ -n "$LLAMA_CMAKE" ]; then
-    CMAKE_ARGS="-$LLAMA_CMAKE" pip install llama-cpp-python || {
-        echo "⚠️  CUDA build failed — falling back to CPU build of llama-cpp-python"
+    CMAKE_ARGS="$LLAMA_CMAKE" pip install llama-cpp-python
+    if [ $? -ne 0 ]; then
+        echo "⚠️  CUDA build failed — falling back to CPU-only llama-cpp-python"
         pip install llama-cpp-python
-    }
+        if [ $? -ne 0 ]; then
+            echo "⚠️  llama-cpp-python install failed — local GGUF inference won't work."
+        fi
+    fi
 else
     pip install llama-cpp-python
 fi
@@ -101,25 +134,45 @@ fi
 # ── Step 4: Flash Attention 2 (optional) ─────────────────────────────────────
 echo ""
 echo "━━━ Step 4/5: Flash Attention 2 (optional) ━━━"
-if [ -n "$CUDA_MAJOR" ]; then
-    pip install wheel ninja
-    MAX_JOBS=2 pip install flash-attn --no-build-isolation || \
-        echo "⚠️  flash-attn failed to build — skipping. xformers will be used instead."
-else
-    echo "   Skipping (no CUDA)."
+
+# Skip on low-VRAM or CPU-only — compiling flash-attn requires RAM proportional
+# to GPU VRAM, and will OOM-kill the process on machines with ≤16GB RAM / ≤12GB VRAM.
+SKIP_FLASH=0
+if [ -z "$CUDA_MAJOR" ]; then
+    echo "   Skipping — no CUDA."
+    SKIP_FLASH=1
+elif [ "$VRAM_GB" -le 12 ] 2>/dev/null; then
+    echo "   Skipping — GPU has ${VRAM_GB}GB VRAM (≤12GB). Compiling flash-attn would OOM."
+    echo "   xformers (installed in Step 5) will be used instead."
+    SKIP_FLASH=1
+fi
+
+if [ "$SKIP_FLASH" -eq 0 ]; then
+    pip install wheel ninja --quiet
+    echo "   Building flash-attn with MAX_JOBS=2 (this can take 10-30 min)..."
+    # Run in a subshell so an OOM kill doesn't take down this script
+    (MAX_JOBS=2 pip install flash-attn --no-build-isolation)
+    if [ $? -ne 0 ]; then
+        echo "⚠️  flash-attn build failed — skipping. xformers will be used instead."
+    else
+        echo "✅ flash-attn installed successfully."
+    fi
 fi
 
 # ── Step 5: Everything else ───────────────────────────────────────────────────
 echo ""
-echo "━━━ Step 5/5: Installing remaining dependencies ━━━"
+echo "━━━ Step 5/5: Remaining dependencies ━━━"
 pip install -r requirements.txt
+if [ $? -ne 0 ]; then
+    echo "❌ requirements.txt install failed."
+    exit 1
+fi
 
 # ── Config setup ─────────────────────────────────────────────────────────────
 if [ ! -f "config.json" ]; then
     cp config.example.json config.json
     echo ""
-    echo "📝 Created config.json from config.example.json"
-    echo "   Edit it to set your data directory and preferences."
+    echo "📝 Created config.json — edit it to set your data directory and preferences."
 fi
 
 echo ""
