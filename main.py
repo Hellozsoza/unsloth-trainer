@@ -771,8 +771,7 @@ def _get_lora_target_modules(model):
 
 
 def apply_lora(model, r=16, alpha=16, dropout=0.0):
-    """Apply LoRA — tries FastModel first, then FastLanguageModel, then PEFT directly.
-    Auto-detects MoE expert projection layers (w1/w2/w3) for Mixtral, Qwen2-MoE, etc."""
+    """Apply LoRA — auto-detects MoE expert projection layers (w1/w2/w3)."""
     target_modules = _get_lora_target_modules(model)
     try:
         from unsloth import FastModel
@@ -4736,7 +4735,12 @@ _HARMLESS_PROMPTS = [
 
 
 def run_abliterate(config):
-    """Remove the refusal direction from every weight matrix in a model."""
+    """Remove the refusal direction from every weight matrix in a model.
+    1. Run N harmful + N harmless prompts, collect last-token hidden states.
+    2. Compute refusal_dir = mean(harmful) - mean(harmless), normalised.
+    3. For every W where W.shape[-1] == hidden_size:
+           W <- W - threshold * (W @ d) * d
+    4. Save to .outputs/"""
     try:
         import torch, gc, itertools
 
@@ -4775,7 +4779,7 @@ def run_abliterate(config):
             return torch.stack(states)
 
         emit_log(f"Running {n_prompts} harmful prompts...", "info")
-        harmful_hs = collect_hs(harmful, "Harmful")
+        harmful_hs  = collect_hs(harmful,  "Harmful")
         setprogress(40)
 
         emit_log(f"Running {n_prompts} harmless prompts...", "info")
@@ -4795,9 +4799,12 @@ def run_abliterate(config):
         layer_filters = [f.strip() for f in layer_filter.split(",")] if layer_filter else []
         n_modified = 0
         for param_name, param in model.named_parameters():
-            if param.dim() < 2: continue
-            if layer_filters and not any(f in param_name for f in layer_filters): continue
-            if param.data.shape[-1] != hidden_size: continue
+            if param.dim() < 2:
+                continue
+            if layer_filters and not any(f in param_name for f in layer_filters):
+                continue
+            if param.data.shape[-1] != hidden_size:
+                continue
             W = param.data.float()
             param.data = (W - threshold * (W @ refusal_dir).unsqueeze(-1) * refusal_dir
                           ).to(param.dtype)
@@ -4813,6 +4820,7 @@ def run_abliterate(config):
         current_job["status"] = "done"
         emit_log(f"Abliterated model saved -> {out_dir}", "success")
         emit_log(f"  {n_modified} matrices modified | threshold={threshold} | prompts={n_prompts}", "info")
+        emit_log(f"  Load in Fine-Tune or Chat: {out_dir}", "info")
 
     except KeyboardInterrupt:
         current_job["status"] = "stopped"
@@ -4825,8 +4833,7 @@ def run_abliterate(config):
 
 @app.route("/api/abliterate", methods=["POST"])
 def abliterate_route():
-    return start_job(run_abliterate, request.json)
-
+    return _start_job(run_abliterate, request.json)
 
 if __name__ == "__main__":
     import logging
