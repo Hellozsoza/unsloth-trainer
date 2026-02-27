@@ -3700,24 +3700,27 @@
               <div class="page-sub">Remove refusal behaviour (decensor) from a model</div>
             </div>
             <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+              <button class="btn btn-secondary btn-sm" style="align-self:center" onclick="calcResources('abl')">🧮 Estimate</button>
               <button class="btn btn-primary" id="abliterateBtn" onclick="startAbliterate()">Abliterate Model</button>
             </div>
           </div>
+
           <div class="card" style="border-color:rgba(245,158,11,.25);background:rgba(245,158,11,.04)">
             <div class="card-body" style="font-size:12px;color:var(--dim);line-height:1.7">
-              <b>How it works:</b> Abliteration finds the "refusal direction" in the model's residual stream by comparing
-              activations on harmful vs harmless prompts, then projects that direction out of all weight matrices —
-              removing the learned refusal behaviour without any fine-tuning. The original model is unchanged; output is
-              saved to <code>.outputs/</code>.
+              <b>How it works:</b> Abliteration finds the "refusal direction" in the model's residual stream by
+              comparing activations on harmful vs harmless prompts, then projects that direction out of all weight
+              matrices — removing learned refusal without any fine-tuning. Original model is unchanged; output saved to <code>.outputs/</code>.
             </div>
           </div>
+
           <div class="card">
             <div class="card-header">Model</div>
             <div class="card-body grid2">
               <div class="fg full">
                 <label>Model Path <span style="font-size:9px;text-transform:none">(safetensors, not GGUF)</span></label>
                 <div style="display:flex;gap:8px;align-items:center">
-                  <input id="abl-model" placeholder=".models/Llama-3.2-3B-Instruct" style="flex:1">
+                  <input id="abl-model" placeholder=".models/Llama-3.2-3B-Instruct" style="flex:1"
+                    oninput="document.getElementById('abl-res-panel').style.display='none'">
                   <button class="btn btn-secondary btn-sm" onclick="openModelPicker('abl-model')" style="white-space:nowrap">Browse</button>
                 </div>
                 <div class="hint">Must be a safetensors model. GGUF is inference-only and cannot be abliterated.</div>
@@ -3735,6 +3738,7 @@
               </div>
             </div>
           </div>
+
           <div class="card">
             <div class="card-header">Abliteration Settings</div>
             <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
@@ -3763,12 +3767,25 @@
               </div>
             </div>
           </div>
+
           <div class="card" style="border-color:rgba(239,68,68,.25);background:rgba(239,68,68,.04)">
             <div class="card-body" style="font-size:12px;color:var(--dim)">
               <b>Abliteration is irreversible on the saved copy</b> — always keep a backup of the original model.
               Quality on normal tasks is generally preserved, but thresholds &gt;30% may degrade coherence.
             </div>
           </div>
+
+          <div id="abl-res-panel" style="display:none">
+            <div class="res-card">
+              <div style="font-size:12px;font-weight:700;color:var(--bright);margin-bottom:4px">Resource Estimate</div>
+              <div class="res-row"><span class="res-label">VRAM</span><div class="res-bw"><div id="abl-rb-vram" class="res-bar"></div></div><span id="abl-rv-vram" class="res-val"></span><span id="abl-rs-vram" class="res-st"></span></div>
+              <div class="res-row"><span class="res-label">RAM</span><div class="res-bw"><div id="abl-rb-ram" class="res-bar"></div></div><span id="abl-rv-ram" class="res-val"></span><span id="abl-rs-ram" class="res-st"></span></div>
+              <div class="res-row"><span class="res-label">Disk</span><div class="res-bw"><div id="abl-rb-disk" class="res-bar"></div></div><span id="abl-rv-disk" class="res-val"></span><span id="abl-rs-disk" class="res-st"></span></div>
+              <div id="abl-res-warn" class="res-warn"></div>
+              <div id="abl-res-tip" class="res-tip"></div>
+            </div>
+          </div>
+
           <div class="card" id="abl-progress-card" style="display:none">
             <div class="card-header">Progress</div>
             <div class="card-body">
@@ -3786,6 +3803,7 @@
               <div class="page-sub">Combine multiple models into one using SLERP, TIES, DARE, or weighted averaging
               </div>
             </div>
+            <button class="btn btn-secondary btn-sm" style="align-self:center" onclick="calcResources('merge')">🧮 Estimate</button>
             <button class="btn btn-primary ml-auto" id="mergeBtn" onclick="startMerge()">🔀 Merge Models</button>
           </div>
 
@@ -3919,6 +3937,17 @@
           </div>
 
           <!-- Progress -->
+          <div id="merge-res-panel" style="display:none">
+            <div class="res-card">
+              <div style="font-size:12px;font-weight:700;color:var(--bright);margin-bottom:4px">Resource Estimate</div>
+              <div class="res-row"><span class="res-label">VRAM</span><div class="res-bw"><div id="merge-rb-vram" class="res-bar"></div></div><span id="merge-rv-vram" class="res-val"></span><span id="merge-rs-vram" class="res-st"></span></div>
+              <div class="res-row"><span class="res-label">RAM</span><div class="res-bw"><div id="merge-rb-ram" class="res-bar"></div></div><span id="merge-rv-ram" class="res-val"></span><span id="merge-rs-ram" class="res-st"></span></div>
+              <div class="res-row"><span class="res-label">Disk</span><div class="res-bw"><div id="merge-rb-disk" class="res-bar"></div></div><span id="merge-rv-disk" class="res-val"></span><span id="merge-rs-disk" class="res-st"></span></div>
+              <div id="merge-res-warn" class="res-warn"></div>
+              <div id="merge-res-tip" class="res-tip"></div>
+            </div>
+          </div>
+
           <div class="card" id="merge-progress-card" style="display:none">
             <div class="card-header">⏳ Progress</div>
             <div class="card-body">
@@ -6912,6 +6941,93 @@
         });
       }
 
+      // ── MERGE estimation ───────────────────────────────────────────────────
+      } else if (mode === 'merge') {
+        const rows = document.querySelectorAll('#merge-model-list .merge-model-row');
+        const paths = [...rows].map(r => r.querySelector('input')?.value?.trim()).filter(Boolean);
+        const basePath = document.getElementById('merge-base-path')?.value?.trim();
+        const method = document.querySelector('input[name="merge-method"]:checked')?.value || 'slerp';
+
+        if (!paths.length) { toast('Add at least one model to estimate', 'error'); return; }
+
+        const infos = await Promise.all(paths.map(p => _modelInfo(p)));
+        const baseInfo = basePath ? await _modelInfo(basePath) : null;
+        const allInfos = [...infos, baseInfo].filter(Boolean);
+        const maxP = Math.max(...allInfos.map(i => i.params || 0), 0);
+        const avgP = allInfos.length ? allInfos.reduce((s, i) => s + (i.params || 0), 0) / allInfos.length : 0;
+        const L = allInfos[0]?.L || 32;
+
+        // Need to hold 2 models in fp16 simultaneously for SLERP,
+        // up to 3 for TIES/DARE (base + 2 delta vectors)
+        const simul = method === 'slerp' ? 2 : (method === 'linear' ? 2 : Math.min(paths.length + 1, 3));
+        const vram  = Math.round(_gb(maxP, 2.0) * simul * 100) / 100;
+        const ram   = Math.round((_gb(avgP, 2.0) * (simul + 1) + 2) * 100) / 100;
+        const disk  = Math.round((_gb(maxP, 2.0) + 0.5) * 10) / 10;
+
+        const secsPerLayer = method === 'linear' ? 0.15 : method === 'slerp' ? 1.2 : 0.9;
+        const mergeSecs = L * secsPerLayer * Math.max(paths.length - 1, 1);
+        const saveSecs  = _gb(maxP, 2.0) * 8;
+
+        if (vram > sys.vram_total_gb)
+          warns.push(`⛔ VRAM needed: ~${vram} GB > GPU total: ${sys.vram_total_gb} GB — merge will OOM!`);
+        else if (vram > sys.vram_free_gb)
+          warns.push(`⚠️ VRAM needed: ~${vram} GB, free: ${sys.vram_free_gb} GB — close other GPU apps first.`);
+        if (ram > sys.ram_total_gb * 0.8)
+          warns.push(`⚠️ RAM tight — ${ram} GB needed vs ${sys.ram_total_gb} GB total.`);
+        if (method === 'ties' || method === 'dare')
+          tips.push('💡 TIES/DARE briefly hold delta vectors in RAM (~3× model size spike during trimming).');
+        tips.push(`📊 ${simul} model(s) fp16 in VRAM simultaneously · output: ~${_gb(maxP, 2.0)} GB`);
+        tips.push(`⏱️ Merge: ~${fmtTime(mergeSecs)} · Save: ~${fmtTime(saveSecs)} · Total: ~${fmtTime(mergeSecs + saveSecs)}`);
+
+        _showPanel('merge', { vram, vramLim: sys.vram_total_gb, ram, ramLim: sys.ram_total_gb, disk, diskLim: sys.disk_free_gb, warns, tips });
+
+      // ── ABLITERATE estimation ──────────────────────────────────────────────
+      } else if (mode === 'abl') {
+        const path     = document.getElementById('abl-model')?.value?.trim();
+        const fourBit  = document.getElementById('abl-4bit')?.value === 'true';
+        const nPrompts = parseInt(document.getElementById('abl-n-prompts')?.value) || 64;
+        const bpp      = fourBit ? 0.55 : 2.0;
+        const info     = await _modelInfo(path);
+        const P = info?.params || 0;
+        const H = info?.H || 2048;
+        const L = info?.L || 32;
+
+        // Model in VRAM + 2×N hidden state vectors (fp32) + one layer's projection scratch
+        const modelV   = _gb(P, bpp);
+        const hsBuffer = Math.round(2 * nPrompts * H * 4 / 1e9 * 100) / 100;
+        const projTemp = Math.round(H * H * 4 / 1e9 * 100) / 100;
+        const vram     = Math.round((modelV + hsBuffer + projTemp) * 100) / 100;
+
+        // CPU RAM: only the hidden-state buffers + small projection temps (model stays on GPU)
+        const ram  = Math.round((hsBuffer * 2 + projTemp * 4 + 1.5) * 100) / 100;
+
+        // Output always saved in fp16 regardless of load quant
+        const disk = Math.round(_gb(P, 2.0) * 10) / 10;
+
+        // Time: 2N forward passes (inference-only) + in-place projection + save
+        const fwdSecs  = 2 * nPrompts * (fourBit ? 0.08 : 0.05);
+        const projSecs = L * 4 * 0.03;
+        const saveSecs = _gb(P, 2.0) * 8;
+        const totalSecs = fwdSecs + projSecs + saveSecs;
+
+        if (vram > sys.vram_total_gb)
+          warns.push(`⛔ VRAM needed: ~${vram} GB > GPU total: ${sys.vram_total_gb} GB — will OOM!`);
+        else if (vram > sys.vram_free_gb)
+          warns.push(`⚠️ VRAM needed: ~${vram} GB, free: ${sys.vram_free_gb} GB — close other GPU processes.`);
+        if (!fourBit && P > 7e9)
+          warns.push('⚠️ Large model in fp16 — enable 4-bit to save VRAM during calibration passes.');
+        if (nPrompts > 256)
+          warns.push('⚠️ >256 prompts — diminishing returns above 128; calibration will be slow.');
+
+        tips.push(`📊 Model: ${modelV} GB · HS buffer: ${hsBuffer} GB · proj scratch: ${projTemp} GB`);
+        tips.push(`⏱️ Calibration: ~${fmtTime(fwdSecs)} · Projection: ~${fmtTime(projSecs)} · Save: ~${fmtTime(saveSecs)}`);
+        tips.push(`⏱️ Total: ~${fmtTime(totalSecs)}`);
+        tips.push(`💾 Output: ~${disk} GB (fp16, regardless of load quantisation)`);
+        if (fourBit) tips.push('💡 4-bit load saves VRAM during calibration; output is dequantised to fp16 on save.');
+
+        _showPanel('abl', { vram, vramLim: sys.vram_total_gb, ram, ramLim: sys.ram_total_gb, disk, diskLim: sys.disk_free_gb, warns, tips });
+      }
+
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -7892,7 +8008,7 @@
 
 
   
-// ═══════════════════════════════════ ABLITERATE ════════════════════════════════════
+// ════════════════════════════════════ ABLITERATE ═════════════════════════════════════
 async function startAbliterate() {
   const model = document.getElementById('abl-model').value.trim();
   if (!model) { toast('Enter a model path', 'error'); return; }

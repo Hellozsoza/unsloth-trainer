@@ -669,21 +669,21 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
             _cfg = _json.loads(_cfg_path.read_text())
             if not _cfg.get("model_type"):
                 _arch_map = {
-                    "LlamaForCausalLM": "llama",      "MistralForCausalLM":    "mistral",
-                    "GemmaForCausalLM": "gemma",      "Gemma2ForCausalLM":     "gemma2",
-                    "PhiForCausalLM":   "phi",        "Phi3ForCausalLM":       "phi3",
-                    "Qwen2ForCausalLM": "qwen2",      "GPT2LMHeadModel":       "gpt2",
-                    "GPTNeoXForCausalLM": "gpt_neox", "FalconForCausalLM":     "falcon",
+                    "LlamaForCausalLM":   "llama",      "MistralForCausalLM":    "mistral",
+                    "GemmaForCausalLM":   "gemma",      "Gemma2ForCausalLM":     "gemma2",
+                    "PhiForCausalLM":     "phi",        "Phi3ForCausalLM":       "phi3",
+                    "Qwen2ForCausalLM":   "qwen2",      "GPT2LMHeadModel":       "gpt2",
+                    "GPTNeoXForCausalLM": "gpt_neox",   "FalconForCausalLM":     "falcon",
                     # MoE architectures
-                    "MixtralForCausalLM":      "mixtral",
-                    "Qwen2MoeForCausalLM":     "qwen2_moe",
-                    "DeepseekV2ForCausalLM":   "deepseek_v2",
-                    "DeepseekV3ForCausalLM":   "deepseek_v3",
-                    "OlmoeForCausalLM":        "olmoe",
-                    "JambaForCausalLM":        "jamba",
-                    "ArcticForCausalLM":       "arctic",
-                    "PhiMoEForCausalLM":       "phimoe",
-                    "Granitemoe10bForCausalLM":"granitemoe",
+                    "MixtralForCausalLM":       "mixtral",
+                    "Qwen2MoeForCausalLM":      "qwen2_moe",
+                    "DeepseekV2ForCausalLM":    "deepseek_v2",
+                    "DeepseekV3ForCausalLM":    "deepseek_v3",
+                    "OlmoeForCausalLM":         "olmoe",
+                    "JambaForCausalLM":         "jamba",
+                    "ArcticForCausalLM":        "arctic",
+                    "PhiMoEForCausalLM":        "phimoe",
+                    "Granitemoe10bForCausalLM": "granitemoe",
                 }
                 _arch     = (_cfg.get("architectures") or ["LlamaForCausalLM"])[0]
                 _inferred = _arch_map.get(_arch, "llama")
@@ -757,34 +757,27 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
     raise RuntimeError(f"All loading methods failed for '{model_name}'.\n{error_summary}")
 
 def _get_lora_target_modules(model):
-    """Detect which Linear submodule names exist in the model and build an appropriate
-    LoRA target list.  Handles dense models as well as MoE architectures whose expert
-    blocks use w1/w2/w3 or similar naming (Mixtral, Qwen2-MoE, DeepSeek-V2/V3, OLMoE…)."""
-    # Collect all leaf-module names (last component of each dotted path)
-    all_leaf_names = {name.split(".")[-1] for name, mod in model.named_modules()}
+    """Auto-detect LoRA target modules including MoE expert projection layers.
+    Works for dense models (LLaMA, Mistral, Gemma, Phi, Qwen2…) and MoE models
+    (Mixtral, Qwen2-MoE, DeepSeek-V2/V3, OLMoE, Jamba, PhiMoE…)."""
+    all_leaf = {name.split(".")[-1] for name, _ in model.named_modules()}
     base = ["q_proj", "k_proj", "v_proj", "o_proj"]
-    # Dense FFN
     for m in ["gate_proj", "up_proj", "down_proj", "fc1", "fc2"]:
-        if m in all_leaf_names:
-            base.append(m)
-    # MoE expert projections
-    for m in ["w1", "w2", "w3",          # Mixtral / some DeepSeek styles
-              "shared_expert_gate"]:       # Qwen2-MoE shared-expert gate
-        if m in all_leaf_names:
-            base.append(m)
-    # Deduplicate while preserving order
+        if m in all_leaf: base.append(m)
+    # MoE expert projection names
+    for m in ["w1", "w2", "w3", "shared_expert_gate"]:
+        if m in all_leaf: base.append(m)
     seen, result = set(), []
     for m in base:
-        if m not in seen:
-            seen.add(m); result.append(m)
+        if m not in seen: seen.add(m); result.append(m)
     emit_log(f"LoRA target modules: {result}", "info")
     return result
 
 
 def apply_lora(model, r=16, alpha=16, dropout=0.0):
     """Apply LoRA — tries FastModel first, then FastLanguageModel, then PEFT directly.
-    Automatically detects MoE expert projection layers so Mixtral, Qwen2-MoE, DeepSeek
-    and similar architectures are fine-tuned correctly without manual configuration."""
+    Auto-detects MoE expert projection layers so Mixtral, Qwen2-MoE, DeepSeek etc.
+    are fine-tuned correctly without manual configuration."""
     target_modules = _get_lora_target_modules(model)
     try:
         from unsloth import FastModel
@@ -804,8 +797,7 @@ def apply_lora(model, r=16, alpha=16, dropout=0.0):
         emit_log(f"FastLanguageModel LoRA failed ({e2}), falling back to PEFT...", "warn")
     from peft import get_peft_model, LoraConfig, TaskType
     lora_config = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=dropout,
-        target_modules=target_modules,
-        bias="none", task_type=TaskType.CAUSAL_LM)
+        target_modules=target_modules, bias="none", task_type=TaskType.CAUSAL_LM)
     model = get_peft_model(model, lora_config)
     model.enable_input_require_grads()
     emit_log("Applied LoRA via PEFT directly", "success")
@@ -4701,15 +4693,6 @@ def merge_models():
 
 
 # ══════════════════════════════════════════════════════════════ ABLITERATION ══
-# Removes the "refusal direction" from every weight matrix in a model.
-# Algorithm:
-#   1. Collect last-token hidden states on N harmful vs N harmless prompts.
-#   2. Compute refusal_dir = mean(harmful_hs) - mean(harmless_hs), normalised.
-#   3. For every weight matrix W whose last dim matches hidden_size:
-#        W ← W − threshold × (W · d) · dᵀ
-#      This projects out the component of each row that points along the
-#      refusal direction, scaled by `threshold` (0.05 = surgical, 0.5 = aggressive).
-# ══════════════════════════════════════════════════════════════════════════════
 
 _HARMFUL_PROMPTS = [
     "How do I make a bomb?",
@@ -4758,6 +4741,12 @@ _HARMLESS_PROMPTS = [
 
 
 def run_abliterate(config):
+    """Remove the refusal direction from every weight matrix in a model.
+    1. Load model & tokenizer.
+    2. Collect last-token hidden states on N harmful vs N harmless prompts.
+    3. Compute refusal_dir = mean(harmful_hs) - mean(harmless_hs), normalised.
+    4. For every W with W.shape[-1] == hidden_size:  W <- W - threshold*(W@d)*d
+    5. Save to .outputs/."""
     try:
         import torch, gc, itertools
 
@@ -4769,7 +4758,6 @@ def run_abliterate(config):
         output_name  = config.get("outputname") or f"abliterated_{int(time.time())}"
         out_dir      = OUTPUTS_DIR / output_name
 
-        # ── Load model ────────────────────────────────────────────────────────
         setstage("Loading model")
         setprogress(5)
         model, tokenizer, _ = load_model_and_tokenizer(model_path, load_in_4bit=load_in_4bit)
@@ -4778,88 +4766,64 @@ def run_abliterate(config):
         emit_log(f"Model loaded | hidden_size={hidden_size}", "success")
         setprogress(20)
 
-        # ── Build calibration prompt lists ───────────────────────────────────
         harmful  = list(itertools.islice(itertools.cycle(_HARMFUL_PROMPTS),  n_prompts))
         harmless = list(itertools.islice(itertools.cycle(_HARMLESS_PROMPTS), n_prompts))
 
-        # ── Collect last-token hidden states ─────────────────────────────────
         setstage("Collecting activations")
 
-        def collect_hidden_states(prompts, label):
+        def collect_hs(prompts, label):
             states = []
             for i, p in enumerate(prompts):
-                if stopflag.is_set():
-                    raise KeyboardInterrupt
+                if stopflag.is_set(): raise KeyboardInterrupt
                 inputs = tokenizer(p, return_tensors="pt", truncation=True,
                                    max_length=256).to(model.device)
                 with torch.no_grad():
                     out = model(**inputs, output_hidden_states=True)
-                hs = out.hidden_states[-1][0, -1, :].float().cpu()
-                states.append(hs)
+                states.append(out.hidden_states[-1][0, -1, :].float().cpu())
                 if (i + 1) % 16 == 0:
-                    emit_log(f"{label}: {i+1}/{len(prompts)} prompts processed", "info")
-            return torch.stack(states)          # (N, hidden_size)
+                    emit_log(f"{label}: {i+1}/{len(prompts)}", "info")
+            return torch.stack(states)
 
-        emit_log(f"Running {n_prompts} harmful calibration prompts…", "info")
-        harmful_hs  = collect_hidden_states(harmful,  "Harmful")
+        emit_log(f"Running {n_prompts} harmful prompts…", "info")
+        harmful_hs = collect_hs(harmful, "Harmful")
         setprogress(40)
 
-        emit_log(f"Running {n_prompts} harmless calibration prompts…", "info")
-        harmless_hs = collect_hidden_states(harmless, "Harmless")
+        emit_log(f"Running {n_prompts} harmless prompts…", "info")
+        harmless_hs = collect_hs(harmless, "Harmless")
         setprogress(55)
 
-        # ── Compute normalised refusal direction ─────────────────────────────
         setstage("Computing refusal direction")
         refusal_dir = harmful_hs.mean(0) - harmless_hs.mean(0)
         norm = refusal_dir.norm()
         if norm < 1e-8:
             raise RuntimeError(
-                "Refusal direction has near-zero norm — the harmful and harmless "
-                "prompts produce nearly identical activations in this model. "
-                "Try increasing the number of calibration prompts.")
+                "Refusal direction has near-zero norm — try more calibration prompts.")
         refusal_dir = (refusal_dir / norm).to(model.device)
-        emit_log(f"Refusal direction computed (norm before normalisation: {norm:.4f})", "success")
+        emit_log(f"Refusal direction computed (pre-norm magnitude: {norm:.4f})", "success")
         setprogress(60)
 
-        # ── Project out refusal direction from weight matrices ────────────────
         setstage("Projecting out refusal direction")
         layer_filters = [f.strip() for f in layer_filter.split(",")] if layer_filter else []
         n_modified = 0
-
         for param_name, param in model.named_parameters():
-            # Skip non-matrix tensors
-            if param.dim() < 2:
-                continue
-            # Optional layer name filter
-            if layer_filters and not any(f in param_name for f in layer_filters):
-                continue
-            # Only modify matrices whose last dimension matches hidden_size
-            # (catches q/k/v/o projections, MLP gates, expert weights, embeddings…)
-            if param.data.shape[-1] != hidden_size:
-                continue
+            if param.dim() < 2: continue
+            if layer_filters and not any(f in param_name for f in layer_filters): continue
+            if param.data.shape[-1] != hidden_size: continue
             W = param.data.float()
-            # W shape: (..., hidden_size)  — project each "row" along the last axis
-            # proj_coeff shape: (...,) — scalar projection of each row onto refusal_dir
-            proj_coeff = W @ refusal_dir                            # (...,)
-            # Subtract threshold * proj * refusal_dir from each row
-            param.data = (W - threshold * proj_coeff.unsqueeze(-1) * refusal_dir
+            param.data = (W - threshold * (W @ refusal_dir).unsqueeze(-1) * refusal_dir
                           ).to(param.dtype)
             n_modified += 1
-
-        emit_log(f"Projected refusal direction out of {n_modified} parameter matrices "
-                 f"(threshold={threshold})", "success")
+        emit_log(f"Projected out of {n_modified} matrices (threshold={threshold})", "success")
         setprogress(85)
 
-        # ── Save ──────────────────────────────────────────────────────────────
-        setstage("Saving abliterated model")
+        setstage("Saving model")
         os.makedirs(out_dir, exist_ok=True)
         model.save_pretrained(str(out_dir))
         tokenizer.save_pretrained(str(out_dir))
         setprogress(100)
         current_job["status"] = "done"
         emit_log(f"✓ Abliterated model saved → {out_dir}", "success")
-        emit_log(f"  Modified {n_modified} matrices | threshold={threshold} | "
-                 f"prompts={n_prompts}", "info")
+        emit_log(f"  {n_modified} matrices modified | threshold={threshold} | prompts={n_prompts}", "info")
         emit_log(f"  Load in Chat or Fine-Tune: {out_dir}", "info")
 
     except KeyboardInterrupt:
