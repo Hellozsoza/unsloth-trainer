@@ -672,7 +672,8 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
                     "LlamaForCausalLM":   "llama",      "MistralForCausalLM":    "mistral",
                     "GemmaForCausalLM":   "gemma",      "Gemma2ForCausalLM":     "gemma2",
                     "PhiForCausalLM":     "phi",        "Phi3ForCausalLM":       "phi3",
-                    "Qwen2ForCausalLM":   "qwen2",      "GPT2LMHeadModel":       "gpt2",
+                    "Qwen2ForCausalLM":   "qwen2",      "Qwen3ForCausalLM":      "qwen2",
+                    "GPT2LMHeadModel":       "gpt2",
                     "GPTNeoXForCausalLM": "gpt_neox",   "FalconForCausalLM":     "falcon",
                     "MixtralForCausalLM":       "mixtral",
                     "Qwen2MoeForCausalLM":      "qwen2_moe",
@@ -776,9 +777,12 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
             bnb_4bit_quant_type="nf4")
         _restore3 = _sanitize_local_configs(_resolved)
         try:
-            tokenizer = AutoTokenizer.from_pretrained(_resolved, token=token)
+            # str() + use_fast=True: avoids Python 3.13 sentencepiece crash
+            # where vocab_file Path object causes "not a string" TypeError
+            tokenizer = AutoTokenizer.from_pretrained(
+                str(_resolved), token=token, use_fast=True)
             model     = AutoModelForCausalLM.from_pretrained(
-                _resolved, quantization_config=bnb_cfg,
+                str(_resolved), quantization_config=bnb_cfg,
                 device_map="auto", token=token)
         finally:
             _restore3()
@@ -796,9 +800,10 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
         emit_log("Last resort: transformers float16...", "warn")
         _restore4 = _sanitize_local_configs(_resolved)
         try:
-            tokenizer = AutoTokenizer.from_pretrained(_resolved, token=token)
+            tokenizer = AutoTokenizer.from_pretrained(
+                str(_resolved), token=token, use_fast=True)
             model     = AutoModelForCausalLM.from_pretrained(
-                _resolved, torch_dtype=torch.float16,
+                str(_resolved), torch_dtype=torch.float16,
                 device_map="auto", token=token)
         finally:
             _restore4()
@@ -2872,77 +2877,107 @@ def dataset_hf_files():
 
 @app.route("/api/download/model", methods=["POST"])
 def download_model():
-    data=request.json; repo_id=data.get("repo_id"); patterns=data.get("patterns"); filename=data.get("filename"); out_name=data.get("out_name") or repo_id.replace("/","_")
-    def do(repo_id, patterns, filename, out_name):
+    data      = request.json
+    repo_id   = data.get("repo_id")
+    patterns  = data.get("patterns")
+    filename  = data.get("filename")       # legacy: single file
+    filenames = data.get("filenames")      # NEW: list of selected files
+    out_name  = data.get("out_name") or repo_id.replace("/", "_")
+
+    # These globs are ALWAYS downloaded so config.json is never missing
+    CONFIG_GLOBS = ["*.json", "*.txt", "*.model", "tokenizer*", "special_tokens*"]
+
+    def do(repo_id, patterns, filename, filenames, out_name):
         import shutil
-        local_dir  = Path(MODELS_DIR / out_name)
+        local_dir = Path(MODELS_DIR) / out_name
         local_dir.mkdir(parents=True, exist_ok=True)
-
-        # ── Set downloading state immediately ──────────────────────────────────
         current_job.clear()
-        current_job.update({
-            "status": "downloading", "progress": 0, "logs": [],
-            "stage": f"↓ Connecting to HuggingFace…"
-        })
-        emit_log(f"Starting download: {repo_id}", "info")
+        current_job.update(status="downloading", progress=0, logs=[], stage="Connecting to HuggingFace")
+        emit_log(f"Starting download {repo_id}", "info")
 
-        # ── Get expected total size from HF metadata ───────────────────────────
         expected_bytes = 0
         try:
             from huggingface_hub import list_repo_tree
             for item in list_repo_tree(repo_id, token=hf_token["value"]):
                 size = getattr(item, "size", None)
-                if size: expected_bytes += size
+                if size:
+                    expected_bytes += size
         except Exception:
-            pass  # size unknown, we'll still show bytes-done progress
-
+            pass
         if expected_bytes:
             emit_log(f"Expected size: {expected_bytes/1e9:.2f} GB", "info")
 
-        # ── Background filesystem size monitor ─────────────────────────────────
         monitor_stop = threading.Event()
         _monitor_events.append(monitor_stop)
         _download_dirs.append(str(local_dir))
 
-        def _size_monitor():
+        def size_monitor():
             while not monitor_stop.is_set():
                 try:
                     done = sum(
-                        f.stat().st_size
-                        for f in local_dir.rglob("*")
+                        f.stat().st_size for f in local_dir.rglob("*")
                         if f.is_file() and not f.name.endswith(".incomplete")
                     )
                     done_mb = done / 1e6
                     if expected_bytes > 0:
                         pct = min(int(done / expected_bytes * 100), 99)
                         current_job["progress"] = pct
-                        total_mb = expected_bytes / 1e6
-                        current_job["stage"] = f"↓ {done_mb:.0f} / {total_mb:.0f} MB  ({pct}%)"
+                        current_job["stage"] = f"{done_mb:.0f} / {expected_bytes/1e6:.0f} MB ({pct}%)"
                     else:
-                        # Size unknown — show bytes done, pulse progress
-                        current_job["stage"] = f"↓ {done_mb:.0f} MB downloaded…"
-                        # Fake asymptotic progress so bar moves
-                        current_job["progress"] = min(current_job["progress"] + 1, 90)
+                        current_job["stage"] = f"{done_mb:.0f} MB downloaded"
+                        current_job["progress"] = min(current_job.get("progress", 0) + 1, 90)
                 except Exception:
                     pass
                 monitor_stop.wait(1.0)
 
-        monitor_thread = threading.Thread(target=_size_monitor, daemon=True)
-        monitor_thread.start()
+        threading.Thread(target=size_monitor, daemon=True).start()
 
         try:
             from huggingface_hub import hf_hub_download, snapshot_download
             token = hf_token["value"]
 
-            if filename:
+            if filenames:
+                # Download each individually selected file
+                emit_log(f"Downloading {len(filenames)} selected file(s) from {repo_id}", "info")
+                for fn in filenames:
+                    emit_log(f"  Fetching {fn}", "info")
+                    hf_hub_download(repo_id=repo_id, filename=fn,
+                                    local_dir=str(local_dir), token=token)
+                # Always also grab config/tokenizer files
+                emit_log("Fetching config/tokenizer files…", "info")
+                snapshot_download(
+                    repo_id=repo_id,
+                    local_dir=str(local_dir),
+                    allow_patterns=CONFIG_GLOBS,
+                    ignore_patterns=["*.safetensors", "*.gguf", "*.bin", "*.pt", "*.h5"],
+                    token=token
+                )
+
+            elif filename:
+                # Legacy single-file path — still fetch config alongside
+                emit_log(f"Downloading single file: {filename}", "info")
                 hf_hub_download(repo_id=repo_id, filename=filename,
                                 local_dir=str(local_dir), token=token)
+                emit_log("Fetching config/tokenizer files…", "info")
+                snapshot_download(
+                    repo_id=repo_id,
+                    local_dir=str(local_dir),
+                    allow_patterns=CONFIG_GLOBS,
+                    ignore_patterns=["*.safetensors", "*.gguf", "*.bin", "*.pt", "*.h5"],
+                    token=token
+                )
+
+            elif patterns:
+                emit_log(f"Downloading {len(patterns)} pattern(s) from {repo_id}", "info")
+                all_patterns = list(patterns) + CONFIG_GLOBS
+                kwargs = dict(repo_id=repo_id, local_dir=str(local_dir), allow_patterns=all_patterns)
+                if token:
+                    kwargs["token"] = token
+                snapshot_download(**kwargs)
+
             else:
-                kwargs = {"repo_id": repo_id, "local_dir": str(local_dir)}
-                if patterns:
-                    kwargs["allow_patterns"] = (
-                        patterns + ["*.json","*.txt","*.model","tokenizer*","special_tokens*"]
-                    )
+                emit_log(f"Downloading full repo {repo_id}", "info")
+                kwargs = dict(repo_id=repo_id, local_dir=str(local_dir))
                 if token:
                     kwargs["token"] = token
                 snapshot_download(**kwargs)
@@ -2950,14 +2985,8 @@ def download_model():
             monitor_stop.set()
             current_job["progress"] = 100
             current_job["status"]   = "done"
-            current_job["stage"]    = f"✅ Downloaded: {out_name}"
-            emit_log(f"Download complete: {local_dir}", "success")
-            # ── Remove from partial-download list so Stop won't delete it ──
-            try: _download_dirs.remove(str(local_dir))
-            except ValueError: pass
-
-            all_files = sorted(f.name for f in local_dir.rglob("*") if f.is_file())
-            emit_log(f"Files: {', '.join(all_files[:20])}" + (" …" if len(all_files) > 20 else ""), "info")
+            current_job["stage"]    = f"Downloaded {out_name}"
+            emit_log(f"Download complete → {local_dir}", "success")
 
         except Exception as e:
             monitor_stop.set()
@@ -2965,10 +2994,17 @@ def download_model():
             current_job["stage"]  = "❌ Download failed"
             emit_log(f"Download failed: {e}", "error")
 
-    t = threading.Thread(target=do, args=(repo_id,patterns,filename,out_name), daemon=True)
+        try:
+            _download_dirs.remove(str(local_dir))
+        except ValueError:
+            pass
+        all_files = sorted(f.name for f in local_dir.rglob("*") if f.is_file())
+        emit_log("Files: " + ", ".join(all_files[:20]) + (" …" if len(all_files) > 20 else ""), "info")
+
+    t = threading.Thread(target=do, args=(repo_id, patterns, filename, filenames, out_name), daemon=True)
     _active_threads.append(t)
     t.start()
-    return jsonify({"ok":True})
+    return jsonify({"ok": True})
 
 @app.route("/api/models/import_gguf", methods=["POST"])
 def import_gguf():
@@ -3241,6 +3277,56 @@ def read_model_config():
         return jsonify({"ok": False, "error": str(e)})
 
 
+@app.route("/api/fix_model_config", methods=["POST"])
+def fix_model_config():
+    """Patch config.json fields so renamed/moved models load correctly.
+    Fixes: model_type, architectures[], _name_or_path."""
+    import json as _json
+    data       = request.json or {}
+    model_path = data.get("model_path", "").strip()
+    cfg_file   = Path(model_path) / "config.json"
+    if not cfg_file.exists():
+        return jsonify({"ok": False, "error": "config.json not found"})
+    # Map model_type → canonical architecture class name
+    _type_to_arch = {
+        "llama":   "LlamaForCausalLM",   "mistral":  "MistralForCausalLM",
+        "gemma":   "GemmaForCausalLM",   "gemma2":   "Gemma2ForCausalLM",
+        "phi":     "PhiForCausalLM",     "phi3":     "Phi3ForCausalLM",
+        "qwen2":   "Qwen2ForCausalLM",   "qwen3":    "Qwen2ForCausalLM",
+        "gpt2":    "GPT2LMHeadModel",    "mixtral":  "MixtralForCausalLM",
+        "falcon":  "FalconForCausalLM",  "qwen2_moe":"Qwen2MoeForCausalLM",
+    }
+    _arch_to_type = {v: k for k, v in _type_to_arch.items()}
+    try:
+        cfg = _json.loads(cfg_file.read_text())
+        patches = {}
+        mt       = (data.get("model_type") or "").strip()
+        nop      = (data.get("name_or_path") or "").strip()
+        arch_val = (data.get("architectures") or "").strip()
+        # Auto-infer model_type from existing architectures if not provided
+        if not mt and not cfg.get("model_type"):
+            existing_arch = (cfg.get("architectures") or [""])[0]
+            mt = _arch_to_type.get(existing_arch, "")
+        if mt:
+            cfg["model_type"] = mt
+            patches["model_type"] = mt
+            # Also fix architectures if missing or mismatched
+            if not arch_val and not cfg.get("architectures"):
+                arch_val = _type_to_arch.get(mt, "")
+        if arch_val:
+            cfg["architectures"] = [arch_val]
+            patches["architectures"] = [arch_val]
+        if nop:
+            cfg["_name_or_path"] = nop
+            patches["_name_or_path"] = nop
+        if not patches:
+            return jsonify({"ok": False, "error": "Nothing to patch — all fields already set or no values provided"})
+        cfg_file.write_text(_json.dumps(cfg, indent=2))
+        return jsonify({"ok": True, "patched": patches})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 # ═══ ROPE SCALING ════════════════════════════════════════════════════════════
 
 def run_rope_scale(config):
@@ -3303,6 +3389,72 @@ def run_rope_scale(config):
         current_job["status"] = "error"; emit_log(f"Error: {e}", "error"); emit_log(traceback.format_exc(), "error")
 
 
+
+@app.route("/api/generate_model_config", methods=["POST"])
+def generate_model_config():
+    """Generate a minimal config.json from scratch for a model folder that is missing one."""
+    import json as _json
+    data         = request.json or {}
+    model_path   = data.get("model_path", "").strip()
+    arch         = data.get("architecture", "llama").strip().lower()
+    model_type   = data.get("model_type", "").strip().lower() or arch
+    name_or_path = data.get("name_or_path", "").strip()
+
+    try:
+        vocab_size        = int(data.get("vocab_size")        or 32000)
+        hidden_size       = int(data.get("hidden_size")       or 4096)
+        num_layers        = int(data.get("num_layers")        or 32)
+        num_heads         = int(data.get("num_heads")         or 32)
+        intermediate_size = int(data.get("intermediate_size") or hidden_size * 4)
+        max_pos           = int(data.get("max_position_embeddings") or 4096)
+    except (TypeError, ValueError) as e:
+        return jsonify(ok=False, error=f"Invalid numeric field: {e}")
+
+    ARCH_MAP = {
+        "llama":   "LlamaForCausalLM",
+        "mistral": "MistralForCausalLM",
+        "gemma":   "GemmaForCausalLM",
+        "gemma2":  "Gemma2ForCausalLM",
+        "phi":     "PhiForCausalLM",
+        "phi3":    "Phi3ForCausalLM",
+        "qwen2":   "Qwen2ForCausalLM",
+        "qwen3":   "Qwen3ForCausalLM",
+        "gpt2":    "GPT2LMHeadModel",
+        "falcon":  "FalconForCausalLM",
+        "mixtral": "MixtralForCausalLM",
+    }
+    arch_class = ARCH_MAP.get(arch, "LlamaForCausalLM")
+
+    cfg = {
+        "architectures":          [arch_class],
+        "model_type":             model_type,
+        "hidden_size":            hidden_size,
+        "intermediate_size":      intermediate_size,
+        "num_hidden_layers":      num_layers,
+        "num_attention_heads":    num_heads,
+        "num_key_value_heads":    num_heads,
+        "vocab_size":             vocab_size,
+        "max_position_embeddings": max_pos,
+        "torch_dtype":            "float16",
+        "transformers_version":   "4.40.0",
+    }
+    if name_or_path:
+        cfg["name_or_path"] = name_or_path
+
+    # Preview only (no model_path given)
+    if not model_path:
+        return jsonify(ok=True, config=cfg, written=False)
+
+    if not Path(model_path).exists():
+        return jsonify(ok=False, error=f"Path does not exist: {model_path}")
+
+    cfg_file = Path(model_path) / "config.json"
+    try:
+        cfg_file.write_text(_json.dumps(cfg, indent=2))
+        return jsonify(ok=True, config=cfg, written=True, path=str(cfg_file))
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
 @app.route("/api/rope_scale", methods=["POST"])
 def rope_scale_route():
     return _start_job(run_rope_scale, request.json)
@@ -3336,6 +3488,14 @@ def run_create_blank_model(config):
                 intermediate_size=intermediate, num_hidden_layers=num_layers,
                 num_attention_heads=num_heads, num_key_value_heads=num_heads,
                 max_position_embeddings=max_pos)
+        elif model_type in ("qwen2", "qwen3"):
+            # Qwen3 uses the Qwen2ForCausalLM architecture (same class, extended training)
+            cfg = AutoConfig.for_model(
+                "qwen2", vocab_size=vocab_size, hidden_size=hidden_size,
+                intermediate_size=intermediate, num_hidden_layers=num_layers,
+                num_attention_heads=num_heads, num_key_value_heads=num_heads,
+                max_position_embeddings=max_pos)
+            cfg.model_type = "qwen2"  # ensure correct model_type string
         elif model_type == "phi":
             cfg = AutoConfig.for_model(
                 "phi", vocab_size=vocab_size, hidden_size=hidden_size,

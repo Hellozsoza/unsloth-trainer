@@ -1409,7 +1409,8 @@
         <div class="nav-item" onclick="showPage('autodistill')" id="nav-autodistill"> <span class="ni">🎯</span>
           AutoDistill</div>
         <div class="nav-item" onclick="showPage('merge')" id="nav-merge"> <span class="ni">🔀</span> Merge</div>
-        <div class="nav-item" onclick="showPage('abliterate')" id="nav-abliterate"> <span class="ni">🔓</span> Abliterate</div>
+        <div class="nav-item" onclick="showPage('abliterate')" id="nav-abliterate"> <span class="ni">🔓</span>
+          Abliterate</div>
         <div class="nav-sect">Data</div>
         <div class="nav-item" onclick="showPage('gendata')" id="nav-gendata"> <span class="ni">✍️</span> AI Dataset Gen
         </div>
@@ -1422,6 +1423,8 @@
         <div class="nav-item" onclick="showPage('createmodel')" id="nav-createmodel"><span class="ni">🏗️</span> Create
           Model</div>
         <div class="nav-item" onclick="showPage('ropescale')" id="nav-ropescale"><span class="ni">📐</span> RoPE Scale
+        </div>
+        <div class="nav-item" onclick="showPage('fixconfig')" id="nav-fixconfig"><span class="ni">🔧</span> Fix Config
         </div>
         <div class="nav-item" onclick="showPage('models')" id="nav-models"> <span class="ni">🧠</span> Models</div>
         <div class="nav-item" onclick="showPage('outputs')" id="nav-outputs"> <span class="ni">💾</span> Outputs</div>
@@ -3123,6 +3126,130 @@
           </div>
         </div>
 
+        <!-- ═══ FIX CONFIG PAGE ═══ -->
+        <div id="page-fixconfig" style="display:none">
+          <div class="flex">
+            <div>
+              <div class="page-title">🔧 Fix Model Config</div>
+              <div class="page-sub">Repair config.json for renamed or mismatched models</div>
+            </div>
+            <button class="btn btn-primary ml-auto" onclick="startFixConfig()">🔧 Apply Fix</button>
+          </div>
+          <div class="card">
+            <div class="card-header">🧠 Model</div>
+            <div class="card-body grid2">
+              <div class="fg full"><label>Model Path</label>
+                <div style="display:flex;gap:8px">
+                  <input id="fc-model" placeholder="/mnt/f/unsloth/outputs/my_model" style="flex:1"
+                    oninput="fcReadConfig()">
+                  <button class="btn btn-secondary btn-sm" onclick="openModelPicker('fc-model')">📂 Browse</button>
+                </div>
+              </div>
+            </div>
+            <div id="fc-current" style="display:none;padding:0 18px 14px">
+              <div
+                style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:11px;display:flex;flex-wrap:wrap;gap:12px">
+                <span>model_type: <b id="fc-cur-type" style="color:var(--accent)">—</b></span>
+                <span>architectures: <b id="fc-cur-arch" style="color:var(--dim)">—</b></span>
+                <span>_name_or_path: <b id="fc-cur-nop" style="color:var(--accent3)">—</b></span>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">⚙️ Fields to Patch</div>
+            <div class="card-body grid2">
+              <div class="fg">
+                <label>model_type <span style="color:var(--dim);font-size:11px">(e.g. llama, gemma,
+                    qwen2)</span></label>
+                <input id="fc-model-type" placeholder="auto-detected or enter manually">
+                <div class="hint">Leave blank to auto-detect from architectures[]</div>
+              </div>
+              <div class="fg">
+                <label>_name_or_path <span style="color:var(--dim);font-size:11px">(model identity)</span></label>
+                <input id="fc-name-or-path" placeholder="e.g. my_renamed_model">
+                <div class="hint">Set this to the model's folder name so loaders recognize it</div>
+              </div>
+              <div class="fg">
+                <label>architectures[0] <span style="color:var(--dim);font-size:11px">(class name)</span></label>
+                <input id="fc-architectures" placeholder="e.g. LlamaForCausalLM">
+                <div class="hint">Optional — auto-inferred from model_type if blank</div>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="background:rgba(0,229,176,.04);border-color:rgba(0,229,176,.18)">
+            <div class="card-header" style="border-color:rgba(0,229,176,.18)">🔍 Preview</div>
+            <div class="card-body">
+              <pre id="fc-preview"
+                style="font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:12px;overflow-x:auto;white-space:pre-wrap;margin:0">Enter a model path above to load current config.</pre>
+            </div>
+          </div>
+        </div>
+
+
+          <!-- ── Generate config.json card ── -->
+          <div class="card" style="margin-top:4px">
+            <div class="card-header">⚙️ Generate config.json</div>
+            <div class="card-body grid2">
+              <div class="fg">
+                <label>Architecture</label>
+                <select id="gcfg-arch" onchange="gcfgUpdatePreview()">
+                  <option value="llama">LLaMA / Llama-3</option>
+                  <option value="mistral">Mistral</option>
+                  <option value="gemma">Gemma</option>
+                  <option value="gemma2">Gemma 2</option>
+                  <option value="phi">Phi</option>
+                  <option value="phi3">Phi-3</option>
+                  <option value="qwen2">Qwen2</option>
+                  <option value="qwen3">Qwen3</option>
+                  <option value="gpt2">GPT-2</option>
+                  <option value="falcon">Falcon</option>
+                  <option value="mixtral">Mixtral</option>
+                </select>
+              </div>
+              <div class="fg">
+                <label>Vocab Size</label>
+                <input type="number" id="gcfg-vocab" value="32000" min="256" step="256" oninput="gcfgUpdatePreview()">
+              </div>
+              <div class="fg">
+                <label>Hidden Size</label>
+                <input type="number" id="gcfg-hidden" value="4096" min="64" step="64" oninput="gcfgUpdatePreview()">
+              </div>
+              <div class="fg">
+                <label>Intermediate (FFN)</label>
+                <input type="number" id="gcfg-intermediate" value="16384" min="64" step="64" oninput="gcfgUpdatePreview()">
+              </div>
+              <div class="fg">
+                <label>Num Layers</label>
+                <input type="number" id="gcfg-layers" value="32" min="1" oninput="gcfgUpdatePreview()">
+              </div>
+              <div class="fg">
+                <label>Attention Heads</label>
+                <input type="number" id="gcfg-heads" value="32" min="1" oninput="gcfgUpdatePreview()">
+              </div>
+              <div class="fg">
+                <label>Max Position Embeddings</label>
+                <input type="number" id="gcfg-maxpos" value="4096" min="128" step="128" oninput="gcfgUpdatePreview()">
+              </div>
+              <div class="fg">
+                <label>name_or_path <span style="font-size:9px;text-transform:none;color:var(--dim)">optional</span></label>
+                <input id="gcfg-nop" placeholder="e.g. my-model" oninput="gcfgUpdatePreview()">
+              </div>
+            </div>
+            <div class="card-body" style="padding-top:0">
+              <div class="card" style="background:rgba(0,229,176,.04);border-color:rgba(0,229,176,.18)">
+                <div class="card-header" style="border-color:rgba(0,229,176,.18)">🔍 Preview</div>
+                <div class="card-body">
+                  <pre id="gcfg-preview" style="font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:12px;overflow-x:auto;white-space:pre-wrap;margin:0">Fill in fields above.</pre>
+                </div>
+              </div>
+              <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
+                <button class="btn btn-primary" onclick="gcfgWriteConfig()">✏️ Write config.json to Model Path</button>
+                <span id="gcfg-status" style="font-size:12px;font-family:var(--mono);color:var(--dim)"></span>
+              </div>
+              <div class="hint">Uses the Model Path entered above. Creates/overwrites config.json in that folder.</div>
+            </div>
+          </div>
+
         <!-- ═══ TEST PAGE ═══ -->
         <div id="page-test" style="display:none">
           <div class="flex" style="margin-bottom:16px">
@@ -3670,7 +3797,8 @@
                 <input type="range" id="prune-sparsity-range" min="0.05" max="0.9" step="0.05" value="0.3"
                   oninput="document.getElementById('prune-sparsity-val').textContent=Math.round(this.value*100)+'%'; document.getElementById('prune-sparsity').value=this.value">
                 <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:2px">
-                  <span>5%</span><b id="prune-sparsity-val" style="color:var(--accent3)">30%</b><span>90%</span></div>
+                  <span>5%</span><b id="prune-sparsity-val" style="color:var(--accent3)">30%</b><span>90%</span>
+                </div>
                 <input type="hidden" id="prune-sparsity" value="0.3">
                 <div class="hint">% of weights to zero. 10-30% is safe. &gt;50% will noticeably hurt quality.</div>
               </div>
@@ -3700,7 +3828,8 @@
               <div class="page-sub">Remove refusal behaviour (decensor) from a model</div>
             </div>
             <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-              <button class="btn btn-secondary btn-sm" style="align-self:center" onclick="calcResources('abl')">🧮 Estimate</button>
+              <button class="btn btn-secondary btn-sm" style="align-self:center" onclick="calcResources('abl')">🧮
+                Estimate</button>
               <button class="btn btn-primary" id="abliterateBtn" onclick="startAbliterate()">Abliterate Model</button>
             </div>
           </div>
@@ -3709,7 +3838,8 @@
             <div class="card-body" style="font-size:12px;color:var(--dim);line-height:1.7">
               <b>How it works:</b> Abliteration finds the "refusal direction" in the model's residual stream by
               comparing activations on harmful vs harmless prompts, then projects that direction out of all weight
-              matrices — removing learned refusal without any fine-tuning. Original model is unchanged; output saved to <code>.outputs/</code>.
+              matrices — removing learned refusal without any fine-tuning. Original model is unchanged; output saved to
+              <code>.outputs/</code>.
             </div>
           </div>
 
@@ -3721,7 +3851,8 @@
                 <div style="display:flex;gap:8px;align-items:center">
                   <input id="abl-model" placeholder=".models/Llama-3.2-3B-Instruct" style="flex:1"
                     oninput="document.getElementById('abl-res-panel').style.display='none'">
-                  <button class="btn btn-secondary btn-sm" onclick="openModelPicker('abl-model')" style="white-space:nowrap">Browse</button>
+                  <button class="btn btn-secondary btn-sm" onclick="openModelPicker('abl-model')"
+                    style="white-space:nowrap">Browse</button>
                 </div>
                 <div class="hint">Must be a safetensors model. GGUF is inference-only and cannot be abliterated.</div>
               </div>
@@ -3733,7 +3864,8 @@
                 </select>
               </div>
               <div class="fg">
-                <label>Output Name <span style="font-size:9px;text-transform:none;font-weight:400">optional</span></label>
+                <label>Output Name <span
+                    style="font-size:9px;text-transform:none;font-weight:400">optional</span></label>
                 <input id="abl-outname" placeholder="auto">
               </div>
             </div>
@@ -3747,8 +3879,10 @@
                   <label>Refusal Score Threshold</label>
                   <input type="range" id="abl-threshold-range" min="0.05" max="0.5" step="0.05" value="0.1"
                     oninput="document.getElementById('abl-threshold-val').textContent=Math.round(this.value*100);document.getElementById('abl-threshold').value=this.value">
-                  <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:2px">
-                    <span>5% surgical</span><b id="abl-threshold-val" style="color:var(--accent3)">10</b><span>50% aggressive</span>
+                  <div
+                    style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:2px">
+                    <span>5% surgical</span><b id="abl-threshold-val" style="color:var(--accent3)">10</b><span>50%
+                      aggressive</span>
                   </div>
                   <input type="hidden" id="abl-threshold" value="0.1">
                 </div>
@@ -3759,9 +3893,11 @@
                 </div>
               </div>
               <div class="fg">
-                <label>Layer Filter <span style="font-size:9px;text-transform:none;font-weight:400">optional</span></label>
+                <label>Layer Filter <span
+                    style="font-size:9px;text-transform:none;font-weight:400">optional</span></label>
                 <input id="abl-layer-filter" placeholder="e.g. model.layers.10, model.layers.20">
-                <div class="hint">Restrict to layers whose name contains one of these substrings. Blank = all layers.</div>
+                <div class="hint">Restrict to layers whose name contains one of these substrings. Blank = all layers.
+                </div>
               </div>
             </div>
           </div>
@@ -3776,9 +3912,21 @@
           <div id="abl-res-panel" style="display:none">
             <div class="res-card">
               <div style="font-size:12px;font-weight:700;color:var(--bright);margin-bottom:4px">Resource Estimate</div>
-              <div class="res-row"><span class="res-label">VRAM</span><div class="res-bw"><div id="abl-rb-vram" class="res-bar"></div></div><span id="abl-rv-vram" class="res-val"></span><span id="abl-rs-vram" class="res-st"></span></div>
-              <div class="res-row"><span class="res-label">RAM</span><div class="res-bw"><div id="abl-rb-ram" class="res-bar"></div></div><span id="abl-rv-ram" class="res-val"></span><span id="abl-rs-ram" class="res-st"></span></div>
-              <div class="res-row"><span class="res-label">Disk</span><div class="res-bw"><div id="abl-rb-disk" class="res-bar"></div></div><span id="abl-rv-disk" class="res-val"></span><span id="abl-rs-disk" class="res-st"></span></div>
+              <div class="res-row"><span class="res-label">VRAM</span>
+                <div class="res-bw">
+                  <div id="abl-rb-vram" class="res-bar"></div>
+                </div><span id="abl-rv-vram" class="res-val"></span><span id="abl-rs-vram" class="res-st"></span>
+              </div>
+              <div class="res-row"><span class="res-label">RAM</span>
+                <div class="res-bw">
+                  <div id="abl-rb-ram" class="res-bar"></div>
+                </div><span id="abl-rv-ram" class="res-val"></span><span id="abl-rs-ram" class="res-st"></span>
+              </div>
+              <div class="res-row"><span class="res-label">Disk</span>
+                <div class="res-bw">
+                  <div id="abl-rb-disk" class="res-bar"></div>
+                </div><span id="abl-rv-disk" class="res-val"></span><span id="abl-rs-disk" class="res-st"></span>
+              </div>
               <div id="abl-res-warn" class="res-warn"></div>
               <div id="abl-res-tip" class="res-tip"></div>
             </div>
@@ -3787,13 +3935,15 @@
           <div class="card" id="abl-progress-card" style="display:none">
             <div class="card-header">Progress</div>
             <div class="card-body">
-              <div class="prog-wrap h8"><div class="prog-bar" id="abl-progress-fill" style="width:0"></div></div>
+              <div class="prog-wrap h8">
+                <div class="prog-bar" id="abl-progress-fill" style="width:0"></div>
+              </div>
               <div id="abl-stage" style="margin-top:8px;color:var(--hint);font-size:13px"></div>
             </div>
           </div>
         </div>
 
-<!-- ═══════════════════════════════════════════════════════ MERGE PAGE -->
+        <!-- ═══════════════════════════════════════════════════════ MERGE PAGE -->
         <div id="page-merge" style="display:none">
           <div class="flex">
             <div>
@@ -3801,7 +3951,8 @@
               <div class="page-sub">Combine multiple models into one using SLERP, TIES, DARE, or weighted averaging
               </div>
             </div>
-            <button class="btn btn-secondary btn-sm" style="align-self:center" onclick="calcResources('merge')">🧮 Estimate</button>
+            <button class="btn btn-secondary btn-sm" style="align-self:center" onclick="calcResources('merge')">🧮
+              Estimate</button>
             <button class="btn btn-primary ml-auto" id="mergeBtn" onclick="startMerge()">🔀 Merge Models</button>
           </div>
 
@@ -3938,9 +4089,21 @@
           <div id="merge-res-panel" style="display:none">
             <div class="res-card">
               <div style="font-size:12px;font-weight:700;color:var(--bright);margin-bottom:4px">Resource Estimate</div>
-              <div class="res-row"><span class="res-label">VRAM</span><div class="res-bw"><div id="merge-rb-vram" class="res-bar"></div></div><span id="merge-rv-vram" class="res-val"></span><span id="merge-rs-vram" class="res-st"></span></div>
-              <div class="res-row"><span class="res-label">RAM</span><div class="res-bw"><div id="merge-rb-ram" class="res-bar"></div></div><span id="merge-rv-ram" class="res-val"></span><span id="merge-rs-ram" class="res-st"></span></div>
-              <div class="res-row"><span class="res-label">Disk</span><div class="res-bw"><div id="merge-rb-disk" class="res-bar"></div></div><span id="merge-rv-disk" class="res-val"></span><span id="merge-rs-disk" class="res-st"></span></div>
+              <div class="res-row"><span class="res-label">VRAM</span>
+                <div class="res-bw">
+                  <div id="merge-rb-vram" class="res-bar"></div>
+                </div><span id="merge-rv-vram" class="res-val"></span><span id="merge-rs-vram" class="res-st"></span>
+              </div>
+              <div class="res-row"><span class="res-label">RAM</span>
+                <div class="res-bw">
+                  <div id="merge-rb-ram" class="res-bar"></div>
+                </div><span id="merge-rv-ram" class="res-val"></span><span id="merge-rs-ram" class="res-st"></span>
+              </div>
+              <div class="res-row"><span class="res-label">Disk</span>
+                <div class="res-bw">
+                  <div id="merge-rb-disk" class="res-bar"></div>
+                </div><span id="merge-rv-disk" class="res-val"></span><span id="merge-rs-disk" class="res-st"></span>
+              </div>
               <div id="merge-res-warn" class="res-warn"></div>
               <div id="merge-res-tip" class="res-tip"></div>
             </div>
@@ -4128,7 +4291,8 @@
                   <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px">🔒 Inference Mode
                   </div>
                   <div style="font-size:11px;color:var(--dim);font-family:var(--mono)">All inference calls use
-                    <code>torch.inference_mode()</code> — lower overhead than <code>no_grad()</code>.</div>
+                    <code>torch.inference_mode()</code> — lower overhead than <code>no_grad()</code>.
+                  </div>
                 </div>
                 <div
                   style="padding:10px 14px;border-radius:8px;background:var(--s2);border:1px solid rgba(0,229,176,.15)">
@@ -4175,7 +4339,8 @@
                   <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px">🎯 GGUF Batch Tuned
                   </div>
                   <div style="font-size:11px;color:var(--dim);font-family:var(--mono)">GGUF inference runs with
-                    <code>n_batch=512</code> and all CPU threads — fills GPU kernels better.</div>
+                    <code>n_batch=512</code> and all CPU threads — fills GPU kernels better.
+                  </div>
                 </div>
                 <div
                   style="padding:10px 14px;border-radius:8px;background:var(--s2);border:1px solid rgba(0,229,176,.15)">
@@ -5761,8 +5926,8 @@
     }
 
     // ── HF file browser (quant selector) ─────────────────────────────────────────
-    let selectedHfFile = null;   // specific file chosen
-    let selectedHfPatterns = null; // safetensors shard pattern
+    let selectedHfFiles = [];      // multi-select list of {filename, type, sizeBytes}
+    let selectedHfPatterns = null;  // safetensors shard pattern (full-repo mode)
 
     async function fetchHfFiles() {
       const repo = document.getElementById('hf-mrepo').value.trim();
@@ -5770,7 +5935,7 @@
 
       const btn = document.getElementById('fetchFilesBtn');
       btn.disabled = true; btn.textContent = 'Loading...';
-      selectedHfFile = null; selectedHfPatterns = null;
+      selectedHfFiles = []; selectedHfPatterns = null;
 
       try {
         const r = await fetch('/api/models/hf_files', {
@@ -5871,101 +6036,92 @@
     }
 
     function makeFileItem(label, type, filename, isAll, sizeBytes) {
-      const div = document.createElement('div');
       const isGguf = type === 'gguf';
+      const div = document.createElement('div');
       div.style.cssText = 'padding:8px 10px;border-radius:7px;cursor:pointer;border:1px solid var(--border);background:var(--s2);font-size:11px;font-family:var(--mono);transition:.15s;display:flex;align-items:center;gap:8px';
-      const sizeStr = sizeBytes ? '<span style="color:var(--dim);font-size:10px;white-space:nowrap">' + fmtBytes(sizeBytes) + '</span>' : '';
-      div.innerHTML =
-        '<span style="color:' + (isGguf ? 'var(--accent3)' : 'var(--accent)') + '">' + (isGguf ? '📦' : '🔷') + '</span>' +
-        '<span style="flex:1;word-break:break-all">' + label + '</span>' + sizeStr;
-      div.onclick = () => selectHfFile(filename, type, isAll, label, div, sizeBytes);
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.style.cssText = 'accent-color:' + (isGguf ? 'var(--accent3)' : 'var(--accent)') + ';flex-shrink:0;cursor:pointer';
+      const icon = document.createElement('span');
+      icon.style.color = isGguf ? 'var(--accent3)' : 'var(--accent)';
+      icon.textContent = isGguf ? '⬡' : '◈';
+      const nameSpan = document.createElement('span');
+      nameSpan.style.cssText = 'flex:1;word-break:break-all';
+      nameSpan.textContent = label;
+      div.appendChild(cb);
+      div.appendChild(icon);
+      div.appendChild(nameSpan);
+      if (sizeBytes) {
+        const sz = document.createElement('span');
+        sz.style.cssText = 'color:var(--dim);font-size:10px;white-space:nowrap';
+        sz.textContent = fmtBytes(sizeBytes);
+        div.appendChild(sz);
+      }
+      const toggle = () => {
+        const idx = selectedHfFiles.findIndex(f => f.filename === filename);
+        if (cb.checked) {
+          if (idx === -1) selectedHfFiles.push({ filename, type, sizeBytes: sizeBytes || 0 });
+          div.style.borderColor = isGguf ? 'var(--accent3)' : 'var(--accent)';
+          div.style.background  = isGguf ? 'rgba(245,158,11,.08)' : 'rgba(0,229,176,.07)';
+        } else {
+          if (idx !== -1) selectedHfFiles.splice(idx, 1);
+          div.style.borderColor = 'var(--border)';
+          div.style.background  = 'var(--s2)';
+        }
+        updateDlModeLabel();
+        _updateSelectedDisplay();
+      };
+      cb.addEventListener('change', toggle);
+      div.addEventListener('click', e => { if (e.target !== cb) { cb.checked = !cb.checked; toggle(); } });
       div._filename = filename;
       div._type = type;
       div._size = sizeBytes || 0;
       return div;
     }
 
-    let _selectedFileSize = 0;
-    let _repoConfigBytes = 0;
-
-    function selectHfFile(filename, type, isAll, label, el, sizeBytes) {
-      // Deselect all
-      document.querySelectorAll('#hf-st-list > div, #hf-gguf-list > div').forEach(d => {
-        d.style.borderColor = 'var(--border)'; d.style.background = 'var(--s2)';
-      });
-      el.style.borderColor = type === 'gguf' ? 'var(--accent3)' : 'var(--accent)';
-      el.style.background = type === 'gguf' ? 'rgba(245,158,11,.08)' : 'rgba(0,229,176,.07)';
-
-      if (isAll) {
-        selectedHfFile = null;
-        selectedHfPatterns = ['*.safetensors'];
-        // sum all safetensors sizes
-        _selectedFileSize = Array.from(document.querySelectorAll('#hf-st-list > div'))
-          .reduce((s, d) => s + (d._size || 0), 0);
-      } else {
-        selectedHfFile = filename;
-        selectedHfPatterns = null;
-        _selectedFileSize = sizeBytes || 0;
-      }
-
+    function _updateSelectedDisplay() {
       const disp = document.getElementById('hf-selected-display');
+      if (!selectedHfFiles.length) { disp.style.display = 'none'; return; }
+      const totalBytes = selectedHfFiles.reduce((s, f) => s + f.sizeBytes, 0);
+      let inner = selectedHfFiles.map(f =>
+        '<div>' + f.filename + ' <span style="color:var(--dim);font-size:10px">' + fmtBytes(f.sizeBytes) + '</span></div>'
+      ).join('');
+      if (totalBytes) inner += '<div style="margin-top:6px;font-weight:700;color:var(--accent)">Total: ' + fmtBytes(totalBytes) + '</div>';
+      disp.innerHTML = inner;
       disp.style.display = 'block';
-      disp.textContent = '✓ Selected: ' + label;
-      if (type === 'gguf') {
-        disp.style.color = 'var(--accent3)';
-        disp.textContent += '  (GGUF — inference only)';
-      }
-      updateDlModeLabel();
-      showModelDlEstimate(_selectedFileSize + _repoConfigBytes);
-    }
-
-    function showModelDlEstimate(totalBytes) {
-      let el = document.getElementById('hf-dl-estimate');
-      if (!el) {
-        el = document.createElement('div');
-        el.id = 'hf-dl-estimate';
-        el.style.cssText = 'margin-top:10px;padding:10px 14px;border-radius:8px;background:rgba(0,229,176,.06);border:1px solid rgba(0,229,176,.18);display:grid;grid-template-columns:repeat(3,1fr);gap:8px';
-        const btn = document.getElementById('dlModelBtn');
-        btn.parentElement.insertBefore(el, btn.parentElement.firstChild);
-      }
-      if (!totalBytes) { el.style.display = 'none'; return; }
-      // Estimate at typical HF download speeds (50 MB/s on good connection, 10 MB/s slow)
-      const fast = fmtTime(totalBytes / (80 * 1e6));
-      const slow = fmtTime(totalBytes / (10 * 1e6));
-      el.style.display = 'grid';
-      el.innerHTML = `
-    <div style="text-align:center">
-      <div style="font-size:18px;font-weight:700;font-family:var(--mono);color:var(--accent)">${fmtBytes(totalBytes)}</div>
-      <div style="font-size:10px;color:var(--dim);margin-top:2px">STORAGE NEEDED</div>
-    </div>
-    <div style="text-align:center;border-left:1px solid var(--border)">
-      <div style="font-size:18px;font-weight:700;font-family:var(--mono);color:var(--fg)">${fast}</div>
-      <div style="font-size:10px;color:var(--dim);margin-top:2px">FAST CONNECTION</div>
-    </div>
-    <div style="text-align:center;border-left:1px solid var(--border)">
-      <div style="font-size:18px;font-weight:700;font-family:var(--mono);color:var(--accent3)">${slow}</div>
-      <div style="font-size:10px;color:var(--dim);margin-top:2px">SLOW CONNECTION</div>
-    </div>
-  `;
     }
 
     function updateDlModeLabel() {
       const lbl = document.getElementById('hf-dl-mode-label');
-      if (selectedHfFile) lbl.textContent = 'Single file: ' + selectedHfFile.split('/').pop();
-      else if (selectedHfPatterns) lbl.textContent = 'All safetensors shards';
-      else lbl.textContent = 'Full repo (no file selected)';
+      if (!lbl) return;
+      if (selectedHfFiles.length === 1) {
+        lbl.textContent = '1 file: ' + selectedHfFiles[0].filename.split('/').pop();
+      } else if (selectedHfFiles.length > 1) {
+        lbl.textContent = selectedHfFiles.length + ' files selected';
+      } else if (selectedHfPatterns) {
+        lbl.textContent = 'All safetensors shards';
+      } else {
+        lbl.textContent = 'Full repo (no files selected)';
+      }
     }
 
     async function downloadModelSelected() {
-      const repo = document.getElementById('hf-mrepo').value.trim();
+      const repo    = document.getElementById('hf-mrepo').value.trim();
       const outName = document.getElementById('hf-outname').value.trim();
       if (!repo) { toast('Enter a repo ID', 'error'); return; }
       const body = { repo_id: repo, out_name: outName || null };
-      if (selectedHfFile) body.filename = selectedHfFile;
-      if (selectedHfPatterns) body.patterns = selectedHfPatterns;
+      if (selectedHfFiles.length > 0) {
+        body.filenames = selectedHfFiles.map(f => f.filename);
+      } else if (selectedHfPatterns) {
+        body.patterns = selectedHfPatterns;
+      }
+      // no selection = full repo download
       clearLogs();
-      await fetch('/api/download/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      // Show progress card immediately — polling will populate it
+      await fetch('/api/download/model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
       document.getElementById('mainProgCard').style.display = 'block';
       if (isMobile() && !logDrawerOpen) toggleLogDrawer();
       toast('Downloading ' + repo.split('/').pop() + '…', 'success');
@@ -6956,13 +7112,13 @@
         const L = allInfos[0]?.L || 32;
 
         const simul = (method === 'slerp' || method === 'linear') ? 2 : Math.min(paths.length + 1, 3);
-        const vram  = Math.round(_gb(maxP, 2.0) * simul * 100) / 100;
-        const ram   = Math.round((_gb(avgP, 2.0) * (simul + 1) + 2) * 100) / 100;
-        const disk  = Math.round((_gb(maxP, 2.0) + 0.5) * 10) / 10;
+        const vram = Math.round(_gb(maxP, 2.0) * simul * 100) / 100;
+        const ram = Math.round((_gb(avgP, 2.0) * (simul + 1) + 2) * 100) / 100;
+        const disk = Math.round((_gb(maxP, 2.0) + 0.5) * 10) / 10;
 
         const secsPerLayer = method === 'linear' ? 0.15 : method === 'slerp' ? 1.2 : 0.9;
         const mergeSecs = L * secsPerLayer * Math.max(paths.length - 1, 1);
-        const saveSecs  = _gb(maxP, 2.0) * 8;
+        const saveSecs = _gb(maxP, 2.0) * 8;
 
         if (vram > sys.vram_total_gb)
           warns.push(`⛔ VRAM needed: ~${vram} GB > GPU total: ${sys.vram_total_gb} GB — merge will OOM!`);
@@ -6977,27 +7133,27 @@
 
         _showPanel('merge', { vram, vramLim: sys.vram_total_gb, ram, ramLim: sys.ram_total_gb, disk, diskLim: sys.disk_free_gb, warns, tips });
 
-      // ── ABLITERATE estimation ─────────────────────────────────────────────
+        // ── ABLITERATE estimation ─────────────────────────────────────────────
       } else if (mode === 'abl') {
-        const path     = document.getElementById('abl-model')?.value?.trim();
-        const fourBit  = document.getElementById('abl-4bit')?.value === 'true';
+        const path = document.getElementById('abl-model')?.value?.trim();
+        const fourBit = document.getElementById('abl-4bit')?.value === 'true';
         const nPrompts = parseInt(document.getElementById('abl-n-prompts')?.value) || 64;
-        const bpp      = fourBit ? 0.55 : 2.0;
-        const info     = await _modelInfo(path);
+        const bpp = fourBit ? 0.55 : 2.0;
+        const info = await _modelInfo(path);
         const P = info?.params || 0;
         const H = info?.H || 2048;
         const L = info?.L || 32;
 
-        const modelV   = _gb(P, bpp);
+        const modelV = _gb(P, bpp);
         const hsBuffer = Math.round(2 * nPrompts * H * 4 / 1e9 * 100) / 100;
         const projTemp = Math.round(H * H * 4 / 1e9 * 100) / 100;
-        const vram     = Math.round((modelV + hsBuffer + projTemp) * 100) / 100;
-        const ram      = Math.round((hsBuffer * 2 + projTemp * 4 + 1.5) * 100) / 100;
-        const disk     = Math.round(_gb(P, 2.0) * 10) / 10;
+        const vram = Math.round((modelV + hsBuffer + projTemp) * 100) / 100;
+        const ram = Math.round((hsBuffer * 2 + projTemp * 4 + 1.5) * 100) / 100;
+        const disk = Math.round(_gb(P, 2.0) * 10) / 10;
 
-        const fwdSecs   = 2 * nPrompts * (fourBit ? 0.08 : 0.05);
-        const projSecs  = L * 4 * 0.03;
-        const saveSecs  = _gb(P, 2.0) * 8;
+        const fwdSecs = 2 * nPrompts * (fourBit ? 0.08 : 0.05);
+        const projSecs = L * 4 * 0.03;
+        const saveSecs = _gb(P, 2.0) * 8;
         const totalSecs = fwdSecs + projSecs + saveSecs;
 
         if (vram > sys.vram_total_gb)
@@ -7095,6 +7251,70 @@
         num_layers: parseInt(document.getElementById('cm-layers').value), num_heads: heads,
         max_position_embeddings: parseInt(document.getElementById('cm-maxpos').value)
       });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX CONFIG
+    // ═══════════════════════════════════════════════════════════════════════════
+    const FC_ARCH_MAP = {
+      llama: 'LlamaForCausalLM', mistral: 'MistralForCausalLM',
+      gemma: 'GemmaForCausalLM', gemma2: 'Gemma2ForCausalLM',
+      phi: 'PhiForCausalLM', phi3: 'Phi3ForCausalLM',
+      qwen2: 'Qwen2ForCausalLM', qwen3: 'Qwen2ForCausalLM',
+      gpt2: 'GPT2LMHeadModel', mixtral: 'MixtralForCausalLM',
+      falcon: 'FalconForCausalLM',
+    };
+    const FC_TYPE_MAP = Object.fromEntries(Object.entries(FC_ARCH_MAP).map(([k, v]) => [v, k]));
+    let _fcDb = null;
+    function fcReadConfig() { clearTimeout(_fcDb); _fcDb = setTimeout(_doFcRead, 500); }
+    async function _doFcRead() {
+      const path = document.getElementById('fc-model').value.trim(); if (!path) return;
+      try {
+        const d = await fetch('/api/model/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model_path: path }) }).then(r => r.json());
+        if (!d.ok) { document.getElementById('fc-preview').textContent = 'Error: ' + d.error; return; }
+        const c = d.config;
+        const arch = (c.architectures || [])[0] || '';
+        const mt = c.model_type || FC_TYPE_MAP[arch] || '';
+        const nop = c._name_or_path || '';
+        document.getElementById('fc-cur-type').textContent = mt || '(missing)';
+        document.getElementById('fc-cur-arch').textContent = arch || '(missing)';
+        document.getElementById('fc-cur-nop').textContent = nop || '(missing)';
+        document.getElementById('fc-current').style.display = 'block';
+        if (!document.getElementById('fc-model-type').value) document.getElementById('fc-model-type').value = mt;
+        if (!document.getElementById('fc-name-or-path').value) document.getElementById('fc-name-or-path').value = nop || path.split('/').pop().split('\\').pop();
+        if (!document.getElementById('fc-architectures').value) document.getElementById('fc-architectures').value = arch;
+        fcUpdatePreview(c);
+      } catch (e) { console.warn('fc cfg', e); }
+    }
+    function fcUpdatePreview(existingCfg) {
+      const mt = document.getElementById('fc-model-type').value.trim();
+      const nop = document.getElementById('fc-name-or-path').value.trim();
+      const archVal = document.getElementById('fc-architectures').value.trim() || (mt ? FC_ARCH_MAP[mt] : '');
+      const patch = {};
+      if (mt) patch.model_type = mt;
+      if (nop) patch._name_or_path = nop;
+      if (archVal) patch.architectures = [archVal];
+      document.getElementById('fc-preview').textContent = Object.keys(patch).length
+        ? '// config.json patches:\n' + JSON.stringify(patch, null, 2)
+        : 'Fill in fields above to preview changes.';
+    }
+    async function startFixConfig() {
+      const path = document.getElementById('fc-model').value.trim();
+      if (!path) { toast('Enter a model path', 'error'); return; }
+      const mt = document.getElementById('fc-model-type').value.trim();
+      const nop = document.getElementById('fc-name-or-path').value.trim();
+      const archVal = document.getElementById('fc-architectures').value.trim();
+      if (!mt && !nop && !archVal) { toast('Enter at least one field to patch', 'error'); return; }
+      const res = await fetch('/api/fix_model_config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_path: path, model_type: mt || null, name_or_path: nop || null, architectures: archVal || null })
+      }).then(r => r.json());
+      if (res.ok) {
+        toast('config.json patched successfully ✓', 'success');
+        _doFcRead();
+      } else {
+        toast('Error: ' + res.error, 'error');
+      }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -7996,7 +8216,7 @@
 
 
 
-  
+
     // ════════════════════════════════════ ABLITERATE ═════════════════════════
     async function startAbliterate() {
       const model = document.getElementById('abl-model').value.trim();
@@ -8005,12 +8225,12 @@
       document.getElementById('abliterateBtn').disabled = true;
       document.getElementById('abliterateBtn').textContent = 'Running…';
       const body = {
-        modelpath:   model,
-        loadin4bit:  document.getElementById('abl-4bit').value === 'true',
-        threshold:   parseFloat(document.getElementById('abl-threshold').value),
-        nprompts:    parseInt(document.getElementById('abl-n-prompts').value),
+        modelpath: model,
+        loadin4bit: document.getElementById('abl-4bit').value === 'true',
+        threshold: parseFloat(document.getElementById('abl-threshold').value),
+        nprompts: parseInt(document.getElementById('abl-n-prompts').value),
         layerfilter: document.getElementById('abl-layer-filter').value.trim() || null,
-        outputname:  document.getElementById('abl-outname').value.trim() || undefined,
+        outputname: document.getElementById('abl-outname').value.trim() || undefined,
       };
       try {
         const r = await fetch('/api/abliterate', {
@@ -8021,7 +8241,7 @@
         const d = await r.json();
         if (!d.ok) { toast(d.error || 'Failed to start', 'error'); resetAblUI(); return; }
         toast('Abliteration started!', 'success');
-      } catch(e) { toast('Network error: ' + e, 'error'); resetAblUI(); return; }
+      } catch (e) { toast('Network error: ' + e, 'error'); resetAblUI(); return; }
       const poll = setInterval(async () => {
         try {
           const s = await fetch('/api/status').then(r => r.json());
@@ -8032,13 +8252,88 @@
             toast('Abliteration ' + s.status + '!', s.status === 'done' ? 'success' : 'error');
             resetAblUI();
           }
-        } catch(e) { clearInterval(poll); toast('Network error: ' + e, 'error'); resetAblUI(); }
+        } catch (e) { clearInterval(poll); toast('Network error: ' + e, 'error'); resetAblUI(); }
       }, 1500);
     }
     function resetAblUI() {
       document.getElementById('abliterateBtn').disabled = false;
       document.getElementById('abliterateBtn').textContent = 'Abliterate Model';
     }
+    // ── Generate Config (Fix Config page) ─────────────────────────
+    function gcfgUpdatePreview() {
+      const arch = document.getElementById('gcfg-arch').value;
+      const ARCH_MAP = {
+        llama:'LlamaForCausalLM', mistral:'MistralForCausalLM',
+        gemma:'GemmaForCausalLM', gemma2:'Gemma2ForCausalLM',
+        phi:'PhiForCausalLM',     phi3:'Phi3ForCausalLM',
+        qwen2:'Qwen2ForCausalLM', qwen3:'Qwen3ForCausalLM',
+        gpt2:'GPT2LMHeadModel',   falcon:'FalconForCausalLM',
+        mixtral:'MixtralForCausalLM',
+      };
+      const archClass = ARCH_MAP[arch] || 'LlamaForCausalLM';
+      const hidden = parseInt(document.getElementById('gcfg-hidden').value) || 4096;
+      const inter  = parseInt(document.getElementById('gcfg-intermediate').value) || hidden * 4;
+      const cfg = {
+        architectures: [archClass],
+        model_type: arch,
+        hidden_size: hidden,
+        intermediate_size: inter,
+        num_hidden_layers: parseInt(document.getElementById('gcfg-layers').value) || 32,
+        num_attention_heads: parseInt(document.getElementById('gcfg-heads').value) || 32,
+        num_key_value_heads: parseInt(document.getElementById('gcfg-heads').value) || 32,
+        vocab_size: parseInt(document.getElementById('gcfg-vocab').value) || 32000,
+        max_position_embeddings: parseInt(document.getElementById('gcfg-maxpos').value) || 4096,
+        torch_dtype: 'float16',
+        transformers_version: '4.40.0',
+      };
+      const nop = document.getElementById('gcfg-nop').value.trim();
+      if (nop) cfg.name_or_path = nop;
+      document.getElementById('gcfg-preview').textContent = JSON.stringify(cfg, null, 2);
+    }
+
+    async function gcfgWriteConfig() {
+      const modelPath = document.getElementById('fc-model').value.trim();
+      const status    = document.getElementById('gcfg-status');
+      if (!modelPath) { toast('Enter a Model Path in the Model card above first', 'error'); return; }
+      status.textContent = 'Writing…';
+      status.style.color = 'var(--dim)';
+      const body = {
+        model_path:            modelPath,
+        architecture:          document.getElementById('gcfg-arch').value,
+        vocab_size:            document.getElementById('gcfg-vocab').value,
+        hidden_size:           document.getElementById('gcfg-hidden').value,
+        intermediate_size:     document.getElementById('gcfg-intermediate').value,
+        num_layers:            document.getElementById('gcfg-layers').value,
+        num_heads:             document.getElementById('gcfg-heads').value,
+        max_position_embeddings: document.getElementById('gcfg-maxpos').value,
+        name_or_path:          document.getElementById('gcfg-nop').value.trim() || null,
+      };
+      try {
+        const r = await fetch('/api/generate_model_config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (d.ok) {
+          status.textContent = '✓ Written → ' + d.path;
+          status.style.color = 'var(--accent)';
+          toast('config.json written!', 'success');
+          if (typeof fcReadConfig === 'function') fcReadConfig();
+        } else {
+          status.textContent = 'Error: ' + d.error;
+          status.style.color = 'var(--danger)';
+          toast(d.error, 'error');
+        }
+      } catch (e) {
+        status.textContent = 'Error: ' + e;
+        status.style.color = 'var(--danger)';
+      }
+    }
+
+    // init preview
+    gcfgUpdatePreview();
+
   </script>
 </body>
 
