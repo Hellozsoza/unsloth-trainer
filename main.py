@@ -429,8 +429,8 @@ def run_autodistill(config):
         num_prompts  = cfg_int(config.get("num_prompts") or preset["num_prompts"])
         max_tokens   = cfg_int(config.get("max_new_tokens") or preset["max_new_tokens"])
         inf_batch    = cfg_int(config.get("inf_batch_size"), 4)
-        out_name     = config.get("output_name") or f"autodistill_{mode}_{int(time.time())}"
-        run_ts       = int(time.time())
+        run_ts       = time.strftime("%Y-%m-%d_%H-%M-%S")
+        out_name     = config.get("output_name") or f"autodistill_{mode}_{run_ts}"
 
         emit_log(f"AutoDistill mode: {preset['label']}", "info")
         emit_log(f"Teacher: {preset['teacher_file']} ({preset['teacher_params']})", "info")
@@ -720,6 +720,52 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
     except Exception as e:
         errors["FastLanguageModel"] = str(e); emit_log(f"FastLanguageModel also failed: {e}", "warn")
 
+    # Helper: sanitize problematic fields in JSON config files inside a local model
+    # directory so that plain transformers can load unsloth bnb-4bit checkpoints.
+    # Unsloth stores torch dtype objects (not strings) in quantization_config and
+    # sometimes tokenizer_config, causing "not a string" errors in transformers.
+    def _sanitize_local_configs(path):
+        """Patch config.json and tokenizer_config.json in-place, removing or
+        stringifying fields that cause 'not a string' errors.
+        Returns a restore callable that reverts all changes."""
+        import json as _j
+        restores = []
+        model_dir = Path(path)
+
+        def _patch_file(file_path, removals=(), dtype_fields=()):
+            if not file_path.exists():
+                return
+            original = file_path.read_text()
+            try:
+                cfg = _j.loads(original)
+            except Exception:
+                return
+            changed = False
+            for key in removals:
+                if key in cfg:
+                    del cfg[key]; changed = True
+            # Stringify any dtype fields that may be torch objects serialized oddly
+            for key in dtype_fields:
+                if key in cfg and not isinstance(cfg[key], str):
+                    cfg[key] = str(cfg[key]); changed = True
+            if changed:
+                file_path.write_text(_j.dumps(cfg, indent=2))
+                emit_log(f"Sanitized {file_path.name} for transformers fallback", "info")
+                restores.append((file_path, original))
+
+        _patch_file(model_dir / "config.json",
+                    removals=("quantization_config",))
+        _patch_file(model_dir / "tokenizer_config.json",
+                    dtype_fields=("model_input_names",),
+                    removals=())
+
+        def _restore_all():
+            for fp, orig in restores:
+                try: fp.write_text(orig)
+                except Exception: pass
+
+        return _restore_all
+
     # Attempt 3: BitsAndBytes 4-bit — no CPU memory cap so full VRAM is used
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -728,29 +774,40 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
             load_in_4bit=True,
             bnb_4bit_compute_dtype=torch.float16,
             bnb_4bit_quant_type="nf4")
-        tokenizer = AutoTokenizer.from_pretrained(_resolved, token=token)
-        model     = AutoModelForCausalLM.from_pretrained(
-            _resolved, quantization_config=bnb_cfg,
-            device_map="auto", token=token)
+        _restore3 = _sanitize_local_configs(_resolved)
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(_resolved, token=token)
+            model     = AutoModelForCausalLM.from_pretrained(
+                _resolved, quantization_config=bnb_cfg,
+                device_map="auto", token=token)
+        finally:
+            _restore3()
         emit_log(f"Loaded via transformers (4-bit)", "success")
         _active_model["model"] = model; _active_model["tokenizer"] = tokenizer
         return model, tokenizer, "transformers_bnb"
     except Exception as e:
-        errors["Transformers_BnB"] = str(e); emit_log(f"BnB fallback failed: {e}", "warn")
+        errors["Transformers_BnB"] = str(e)
+        emit_log(f"BnB fallback failed: {e}", "warn")
+        emit_log(traceback.format_exc(), "warn")
 
     # Attempt 4: float16 last resort
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer
         emit_log("Last resort: transformers float16...", "warn")
-        tokenizer = AutoTokenizer.from_pretrained(_resolved, token=token)
-        model     = AutoModelForCausalLM.from_pretrained(
-            _resolved, torch_dtype=torch.float16,
-            device_map="auto", token=token)
+        _restore4 = _sanitize_local_configs(_resolved)
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(_resolved, token=token)
+            model     = AutoModelForCausalLM.from_pretrained(
+                _resolved, torch_dtype=torch.float16,
+                device_map="auto", token=token)
+        finally:
+            _restore4()
         emit_log(f"Loaded via transformers (float16)", "success")
         _active_model["model"] = model; _active_model["tokenizer"] = tokenizer
         return model, tokenizer, "transformers"
     except Exception as e:
         errors["Transformers_fp16"] = str(e)
+        emit_log(traceback.format_exc(), "warn")
 
     error_summary = "\n".join(f"  {k}: {v}" for k, v in errors.items())
     raise RuntimeError(f"All loading methods failed for '{model_name}'.\n{error_summary}")
@@ -1523,7 +1580,7 @@ def run_distillation(config):
         model = tok = None
         llm_gguf = None          # GGUF teacher handle (llama-cpp-python)
         is_gguf_teacher = False  # set below if local GGUF path is used
-        run_ts = int(time.time())
+        run_ts = time.strftime("%Y-%m-%d_%H-%M-%S")
 
         # ── Phase 1: Generate teacher responses ───────────────────────────────
         if teacher_source == "cloud":
