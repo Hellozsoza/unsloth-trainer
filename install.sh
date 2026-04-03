@@ -87,12 +87,12 @@ else
 fi
 
 source "$VENV_DIR/bin/activate"
-pip install --upgrade pip --quiet
+pip install --upgrade pip --quiet --no-cache-dir
 
 # ── Step 1: PyTorch ───────────────────────────────────────────────────────────
 echo ""
 echo "━━━ Step 1/5: PyTorch ━━━"
-pip install torch torchvision torchaudio --index-url "$TORCH_INDEX"
+pip install torch torchvision torchaudio --index-url "$TORCH_INDEX" --no-cache-dir
 if [ $? -ne 0 ]; then
     echo "❌ PyTorch install failed. Aborting."
     exit 1
@@ -102,13 +102,13 @@ fi
 echo ""
 echo "━━━ Step 2/5: Unsloth ━━━"
 if [ -n "$UNSLOTH_EXTRA" ]; then
-    pip install "unsloth[$UNSLOTH_EXTRA] @ git+https://github.com/unslothai/unsloth.git"
+    pip install "unsloth[$UNSLOTH_EXTRA] @ git+https://github.com/unslothai/unsloth.git" --no-cache-dir
     if [ $? -ne 0 ]; then
         echo "⚠️  Versioned Unsloth install failed — trying generic install..."
-        pip install unsloth
+        pip install unsloth --no-cache-dir
     fi
 else
-    pip install unsloth
+    pip install unsloth --no-cache-dir
 fi
 if [ $? -ne 0 ]; then
     echo "❌ Unsloth install failed. Aborting."
@@ -119,16 +119,16 @@ fi
 echo ""
 echo "━━━ Step 3/5: llama-cpp-python ━━━"
 if [ -n "$LLAMA_CMAKE" ]; then
-    CMAKE_ARGS="$LLAMA_CMAKE" pip install llama-cpp-python
+    CMAKE_ARGS="$LLAMA_CMAKE" pip install llama-cpp-python --no-cache-dir
     if [ $? -ne 0 ]; then
         echo "⚠️  CUDA build failed — falling back to CPU-only llama-cpp-python"
-        pip install llama-cpp-python
+        pip install llama-cpp-python --no-cache-dir
         if [ $? -ne 0 ]; then
             echo "⚠️  llama-cpp-python install failed — local GGUF inference won't work."
         fi
     fi
 else
-    pip install llama-cpp-python
+    pip install llama-cpp-python --no-cache-dir
 fi
 
 # ── Step 4: Flash Attention 2 (optional) ─────────────────────────────────────
@@ -148,10 +148,10 @@ elif [ "$VRAM_GB" -le 12 ] 2>/dev/null; then
 fi
 
 if [ "$SKIP_FLASH" -eq 0 ]; then
-    pip install wheel ninja --quiet
+    pip install wheel ninja --quiet --no-cache-dir
     echo "   Building flash-attn with MAX_JOBS=2 (this can take 10-30 min)..."
     # Run in a subshell so an OOM kill doesn't take down this script
-    (MAX_JOBS=2 pip install flash-attn --no-build-isolation)
+    (MAX_JOBS=2 pip install flash-attn --no-build-isolation --no-cache-dir)
     if [ $? -ne 0 ]; then
         echo "⚠️  flash-attn build failed — skipping. xformers will be used instead."
     else
@@ -162,7 +162,7 @@ fi
 # ── Step 5: Everything else ───────────────────────────────────────────────────
 echo ""
 echo "━━━ Step 5/5: Remaining dependencies ━━━"
-pip install -r requirements.txt
+pip install -r requirements.txt --no-cache-dir
 if [ $? -ne 0 ]; then
     echo "❌ requirements.txt install failed."
     exit 1
@@ -174,6 +174,33 @@ if [ ! -f "config.json" ]; then
     echo ""
     echo "📝 Created config.json — edit it to set your data directory and preferences."
 fi
+
+# ── Clean up temporary files ─────────────────────────────────────────────────
+echo ""
+echo "🧹 Cleaning up temporary files..."
+
+# Remove pip cache directory (if any residual files)
+if [ -d "$HOME/.cache/pip" ]; then
+    rm -rf "$HOME/.cache/pip"
+fi
+
+# Remove temporary build directories in /tmp
+rm -rf /tmp/pip-* 2>/dev/null
+rm -rf /tmp/easy_install-* 2>/dev/null
+rm -rf /tmp/pip-build-* 2>/dev/null
+rm -rf /tmp/torch_extensions 2>/dev/null
+rm -rf /tmp/llama-* 2>/dev/null
+rm -rf /tmp/flash-attn-* 2>/dev/null
+
+# Remove any build artifacts in current directory
+rm -rf build/ 2>/dev/null
+rm -rf *.egg-info 2>/dev/null
+rm -rf dist/ 2>/dev/null
+
+# Remove pip's wheel cache
+rm -rf "$HOME/.cache/pip" 2>/dev/null
+
+echo "✅ Temporary files cleaned up."
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"
