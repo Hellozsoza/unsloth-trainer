@@ -2,10 +2,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Unsloth Fine-Tuning Lab — Installer
 # ─────────────────────────────────────────────────────────────────────────────
-# NOTE: no "set -e" — we handle errors per-step so one failure doesn't kill
-# the whole install (especially important for flash-attn OOM kills).
 
 VENV_DIR="$(pwd)/venv"
+
+# ── Helper: clear pip cache ───────────────────────────────────────────────────
+clear_pip_cache() {
+    pip cache purge --quiet 2>/dev/null || true
+    rm -rf "$HOME/.cache/pip" 2>/dev/null
+    rm -rf /tmp/pip-* /tmp/easy_install-* /tmp/pip-build-* 2>/dev/null
+}
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"
@@ -97,6 +102,8 @@ if [ $? -ne 0 ]; then
     echo "❌ PyTorch install failed. Aborting."
     exit 1
 fi
+echo "🧹 Clearing pip cache after Step 1..."
+clear_pip_cache
 
 # ── Step 2: Unsloth ───────────────────────────────────────────────────────────
 echo ""
@@ -114,6 +121,8 @@ if [ $? -ne 0 ]; then
     echo "❌ Unsloth install failed. Aborting."
     exit 1
 fi
+echo "🧹 Clearing pip cache after Step 2..."
+clear_pip_cache
 
 # ── Step 3: llama-cpp-python ─────────────────────────────────────────────────
 echo ""
@@ -130,13 +139,13 @@ if [ -n "$LLAMA_CMAKE" ]; then
 else
     pip install llama-cpp-python --no-cache-dir
 fi
+echo "🧹 Clearing pip cache after Step 3..."
+clear_pip_cache
 
 # ── Step 4: Flash Attention 2 (optional) ─────────────────────────────────────
 echo ""
 echo "━━━ Step 4/5: Flash Attention 2 (optional) ━━━"
 
-# Skip on low-VRAM or CPU-only — compiling flash-attn requires RAM proportional
-# to GPU VRAM, and will OOM-kill the process on machines with ≤16GB RAM / ≤12GB VRAM.
 SKIP_FLASH=0
 if [ -z "$CUDA_MAJOR" ]; then
     echo "   Skipping — no CUDA."
@@ -150,7 +159,6 @@ fi
 if [ "$SKIP_FLASH" -eq 0 ]; then
     pip install wheel ninja --quiet --no-cache-dir
     echo "   Building flash-attn with MAX_JOBS=2 (this can take 10-30 min)..."
-    # Run in a subshell so an OOM kill doesn't take down this script
     (MAX_JOBS=2 pip install flash-attn --no-build-isolation --no-cache-dir)
     if [ $? -ne 0 ]; then
         echo "⚠️  flash-attn build failed — skipping. xformers will be used instead."
@@ -158,6 +166,9 @@ if [ "$SKIP_FLASH" -eq 0 ]; then
         echo "✅ flash-attn installed successfully."
     fi
 fi
+echo "🧹 Clearing pip cache after Step 4..."
+clear_pip_cache
+rm -rf /tmp/torch_extensions /tmp/llama-* /tmp/flash-attn-* 2>/dev/null
 
 # ── Step 5: Everything else ───────────────────────────────────────────────────
 echo ""
@@ -167,6 +178,8 @@ if [ $? -ne 0 ]; then
     echo "❌ requirements.txt install failed."
     exit 1
 fi
+echo "🧹 Clearing pip cache after Step 5..."
+clear_pip_cache
 
 # ── Config setup ─────────────────────────────────────────────────────────────
 if [ ! -f "config.json" ]; then
@@ -175,32 +188,11 @@ if [ ! -f "config.json" ]; then
     echo "📝 Created config.json — edit it to set your data directory and preferences."
 fi
 
-# ── Clean up temporary files ─────────────────────────────────────────────────
+# ── Final cleanup ─────────────────────────────────────────────────────────────
 echo ""
-echo "🧹 Cleaning up temporary files..."
-
-# Remove pip cache directory (if any residual files)
-if [ -d "$HOME/.cache/pip" ]; then
-    rm -rf "$HOME/.cache/pip"
-fi
-
-# Remove temporary build directories in /tmp
-rm -rf /tmp/pip-* 2>/dev/null
-rm -rf /tmp/easy_install-* 2>/dev/null
-rm -rf /tmp/pip-build-* 2>/dev/null
-rm -rf /tmp/torch_extensions 2>/dev/null
-rm -rf /tmp/llama-* 2>/dev/null
-rm -rf /tmp/flash-attn-* 2>/dev/null
-
-# Remove any build artifacts in current directory
-rm -rf build/ 2>/dev/null
-rm -rf *.egg-info 2>/dev/null
-rm -rf dist/ 2>/dev/null
-
-# Remove pip's wheel cache
-rm -rf "$HOME/.cache/pip" 2>/dev/null
-
-echo "✅ Temporary files cleaned up."
+echo "🧹 Final cleanup of build artifacts..."
+rm -rf build/ dist/ *.egg-info 2>/dev/null
+echo "✅ Cleanup complete."
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"
