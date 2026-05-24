@@ -14,6 +14,7 @@ unsloth/
 venv/
 index.html:Zone.Identifier
 main.py:Zone.Identifier
+.python-version
 
 # Unsloth compiled cache
 unsloth_compiled_cache/
