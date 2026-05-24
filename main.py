@@ -543,12 +543,7 @@ def run_autodistill(config):
             config.get("load_in_4bit", True),
         )
         set_progress(60)
-        model = apply_lora(
-            model, r=lora_r, alpha=lora_r,
-            use_loftq=bool(config.get("use_loftq", False)),
-            loftq_bits=cfg_int(config.get("loftq_bits"), 4),
-            loftq_iter=cfg_int(config.get("loftq_iter"), 1),
-        )
+        model = apply_lora(model, r=lora_r, alpha=lora_r)
         set_progress(64)
         set_stage("Phase 2: Training student")
         out_dir = str(OUTPUTS_DIR / out_name)
