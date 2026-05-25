@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Unsloth Lab v2</title>
+  <title>Unsloth Lab</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link
     href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;500;600;700;800&display=swap"
@@ -3423,8 +3423,15 @@
                   <option value="llama">LLaMA</option>
                   <option value="mistral">Mistral</option>
                   <option value="gemma">Gemma</option>
+                  <option value="gemma2">Gemma 2</option>
                   <option value="phi">Phi</option>
+                  <option value="phi3">Phi-3</option>
+                  <option value="qwen2">Qwen2</option>
+                  <option value="qwen3">Qwen3</option>
+                  <option value="qwen3_moe">Qwen3-MoE</option>
                   <option value="gpt2">GPT-2</option>
+                  <option value="falcon">Falcon</option>
+                  <option value="mixtral">Mixtral</option>
                 </select>
               </div>
               <div class="fg"><label>Init on</label>
@@ -3654,6 +3661,7 @@
                   <option value="gpt2">GPT-2</option>
                   <option value="falcon">Falcon</option>
                   <option value="mixtral">Mixtral</option>
+                  <option value="qwen3_moe">Qwen3-MoE</option>
                 </select>
               </div>
               <div class="fg">
@@ -4873,6 +4881,7 @@
                   <option value="gpt2">GPT-2</option>
                   <option value="falcon">Falcon</option>
                   <option value="mixtral">Mixtral</option>
+                  <option value="qwen3_moe">Qwen3-MoE</option>
                 </select>
               </div>
               <div class="fg">
@@ -5785,8 +5794,9 @@
     }
 
     // ── Status polling ────────────────────────────────────────────────────────────
+    let _pollTimer = null;
     function startPolling() {
-      setInterval(async () => {
+      async function poll() {
         try {
           const r = await fetch('/api/status');
           const d = await r.json();
@@ -5794,7 +5804,12 @@
         } catch (e) {
           console.error('[poll error]', e);
         }
-      }, 1000);
+        _pollTimer = setTimeout(poll, 1000);
+      }
+      _pollTimer = setTimeout(poll, 1000);
+    }
+    function stopPolling() {
+      if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
     }
 
     function updateStatus(d) {
@@ -5866,6 +5881,7 @@
 
     // ── Log streaming ─────────────────────────────────────────────────────────────
     let _logAutoScroll = true;
+    let _eventSource = null;
 
     function _initLogScroll() {
       const body = document.getElementById('logBody');
@@ -5885,13 +5901,21 @@
     }
 
     function startLogStream() {
+      if (_eventSource) { _eventSource.close(); _eventSource = null; }
       const es = new EventSource('/api/logs/stream');
+      _eventSource = es;
       es.onmessage = e => {
         const d = JSON.parse(e.data);
         if (d.ping) return;
         appendLog(d);
       };
-      es.onerror = () => setTimeout(startLogStream, 2000);
+      es.onerror = () => {
+        // Browser's EventSource auto-reconnects; close stale instance if still alive
+        if (es.readyState === 2) { // CLOSED
+          if (_eventSource === es) _eventSource = null;
+          setTimeout(startLogStream, 2000);
+        }
+      };
     }
 
     const MAX_LOG_ENTRIES = 200;
@@ -7816,6 +7840,7 @@
       phi: 'PhiForCausalLM', phi3: 'Phi3ForCausalLM',
       qwen2: 'Qwen2ForCausalLM', qwen3: 'Qwen2ForCausalLM',
       gpt2: 'GPT2LMHeadModel', mixtral: 'MixtralForCausalLM',
+      qwen3_moe: 'Qwen3MoeForCausalLM',
       falcon: 'FalconForCausalLM',
     };
     const FC_TYPE_MAP = Object.fromEntries(Object.entries(FC_ARCH_MAP).map(([k, v]) => [v, k]));
@@ -8174,6 +8199,10 @@
     const _origShowPage = showPage;
     showPage = function (name) { _origShowPage(name); if (name === 'chat') chatPageInit(); if (name === 'ropescale') ropeUpdatePreview(); if (name === 'autodistill') fetchAdPresets(); if (name === 'perfconfig') fetchTuningStats(); };
     updateSizeEstimate();
+    window.addEventListener('beforeunload', () => {
+      stopPolling();
+      if (_eventSource) { _eventSource.close(); _eventSource = null; }
+    });
 
     // ═══════════════════════════════════════════════════════════════════════════
     // GGUF EXPORT
@@ -8825,6 +8854,7 @@
         qwen2:'Qwen2ForCausalLM', qwen3:'Qwen3ForCausalLM',
         gpt2:'GPT2LMHeadModel',   falcon:'FalconForCausalLM',
         mixtral:'MixtralForCausalLM',
+        qwen3_moe:'Qwen3MoeForCausalLM',
       };
       const archClass = ARCH_MAP[arch] || 'LlamaForCausalLM';
       const hidden = parseInt(document.getElementById('gcfg-hidden').value) || 4096;

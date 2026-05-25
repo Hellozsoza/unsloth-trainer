@@ -24,7 +24,7 @@ os.environ["UNSLOTH_COMPILE_DISABLE"] = "1"
 app = Flask(__name__)
 
 # ─── Global state ─────────────────────────────────────────────────────────────
-log_queue = queue.Queue()
+log_queue = queue.Queue(maxsize=5000)
 current_job = {"status": "idle", "progress": 0, "logs": [], "stage": ""}
 training_thread = None
 stop_flag = threading.Event()
@@ -836,7 +836,10 @@ def emit_log(message, level="info"):
     # Cap in-memory log list so it never grows unbounded on long runs
     if len(current_job["logs"]) > 500:
         current_job["logs"] = current_job["logs"][-500:]
-    log_queue.put(entry)
+    try:
+        log_queue.put_nowait(entry)
+    except queue.Full:
+        pass  # drop oldest logs if queue is full
     print(f"[{level.upper()}] {message}")
 
 
@@ -963,6 +966,7 @@ def load_model_and_tokenizer(model_name, max_seq_length=2048, load_in_4bit=True)
                     "FalconForCausalLM": "falcon",
                     "MixtralForCausalLM": "mixtral",
                     "Qwen2MoeForCausalLM": "qwen2_moe",
+                    "Qwen3MoeForCausalLM": "qwen3_moe",
                     "DeepseekV2ForCausalLM": "deepseek_v2",
                     "DeepseekV3ForCausalLM": "deepseek_v3",
                     "OlmoeForCausalLM": "olmoe",
@@ -4628,6 +4632,7 @@ def fix_model_config():
         "mixtral": "MixtralForCausalLM",
         "falcon": "FalconForCausalLM",
         "qwen2_moe": "Qwen2MoeForCausalLM",
+        "qwen3_moe": "Qwen3MoeForCausalLM",
     }
     _arch_to_type = {v: k for k, v in _type_to_arch.items()}
     try:
@@ -4771,6 +4776,7 @@ def generate_model_config():
         "gpt2": "GPT2LMHeadModel",
         "falcon": "FalconForCausalLM",
         "mixtral": "MixtralForCausalLM",
+        "qwen3_moe": "Qwen3MoeForCausalLM",
     }
     arch_class = ARCH_MAP.get(arch, "LlamaForCausalLM")
 
@@ -4862,6 +4868,18 @@ def run_create_blank_model(config):
                 max_position_embeddings=max_pos,
             )
             cfg.model_type = "qwen2"  # ensure correct model_type string
+        elif model_type == "qwen3_moe":
+            cfg = AutoConfig.for_model(
+                "qwen2_moe",
+                vocab_size=vocab_size,
+                hidden_size=hidden_size,
+                intermediate_size=intermediate,
+                num_hidden_layers=num_layers,
+                num_attention_heads=num_heads,
+                num_key_value_heads=num_heads,
+                max_position_embeddings=max_pos,
+            )
+            cfg.model_type = "qwen3_moe"
         elif model_type == "phi":
             cfg = AutoConfig.for_model(
                 "phi",
@@ -6840,7 +6858,7 @@ if __name__ == "__main__":
 
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
     print("╔══════════════════════════════════════════════════╗")
-    print("║    🦥  Unsloth Fine-Tuning Lab  v2.0             ║")
+    print("║    🦥  Unsloth Fine-Tuning Lab                   ║")
     print("║    http://localhost:5000                         ║")
     print("╚══════════════════════════════════════════════════╝")
     app.run(debug=False, host="0.0.0.0", port=5000, threaded=True)
