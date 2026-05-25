@@ -37,7 +37,7 @@ _download_dirs = []  # partial download dirs to clean up on stop
 _monitor_events = []  # monitor/pulse threading.Events to stop
 
 # ─── Data directories ─────────────────────────────────────────────────────────
-BASE_DATA_DIR = Path("/mnt/f/unsloth")
+BASE_DATA_DIR = Path(json.loads(Path("config.json").read_text()).get("base_data_dir", "/home/unsloth"))
 MODELS_DIR = BASE_DATA_DIR / "models"
 DATASETS_DIR = BASE_DATA_DIR / "datasets"
 OUTPUTS_DIR = BASE_DATA_DIR / "outputs"
