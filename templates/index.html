@@ -7649,14 +7649,16 @@
         const vramRow = document.getElementById('cm-vram-row');
         const ramRow = document.getElementById('cm-ram-row');
         if (vramRow) vramRow.style.display = gpuOn ? '' : 'none';
-        if (ramRow) ramRow.style.display = gpuOn ? 'none' : '';
+        if (ramRow) ramRow.style.display = '';  // always show — Linux OOM killer is real
 
         let vram = 0, ram = 0;
         if (gpuOn) {
           vram = Math.round(P * 2 / 1e9 * 1.1 * 100) / 100;  // fp16 on VRAM + 10% overhead
+          ram = Math.round(P * 2 / 1e9 * 1.2 * 100) / 100;   // fp16 also uses system RAM during init
           if (vram > sys.vram_total_gb) warns.push(`VRAM needed: ${vram} GB > GPU total ${sys.vram_total_gb} GB — init will OOM!`);
           else if (vram > sys.vram_free_gb) warns.push(`${vram} GB VRAM needed, only ${sys.vram_free_gb} GB free.`);
-          tips.push(`🚀 GPU init (fp16): ${vram} GB VRAM — no CPU RAM spike.`);
+          if (ram > sys.ram_free_gb * 0.85) warns.push(`RAM tight: ~${ram} GB needed, ${sys.ram_free_gb} GB free.`);
+          tips.push(`🚀 GPU init (fp16): ${vram} GB VRAM + ~${ram} GB system RAM.`);
         } else {
           ram = Math.round(P * 4 / 1e9 * 1.6 * 100) / 100;   // fp32 in RAM during init
           if (ram > sys.ram_total_gb) warns.push(`RAM needed: ${ram} GB > system total ${sys.ram_total_gb} GB — will crash!`);
@@ -7667,7 +7669,7 @@
         tips.push(`After creation — VRAM at training: ~${Math.round(disk * 0.55 * 100) / 100} GB (4-bit) / ~${Math.round(disk * 1.2 * 100) / 100} GB (fp16)`);
         _showPanel('cm', {
           vram: gpuOn ? vram : undefined, vramLim: sys.vram_total_gb,
-          ram: gpuOn ? undefined : ram, ramLim: sys.ram_total_gb,
+          ram, ramLim: sys.ram_total_gb,
           disk, diskLim: sys.disk_free_gb,
           warns, tips
         });

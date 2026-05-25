@@ -4869,6 +4869,12 @@ def run_create_blank_model(config):
             )
             cfg.model_type = "qwen2"  # ensure correct model_type string
         elif model_type == "qwen3_moe":
+            moe_inter = config.get("moe_intermediate_size") or max(
+                hidden_size // 2, 256
+            )
+            num_experts = int(config.get("num_experts", 8))
+            num_shared = int(config.get("num_shared_experts", 2))
+            top_k = int(config.get("top_k", 2))
             cfg = AutoConfig.for_model(
                 "qwen2_moe",
                 vocab_size=vocab_size,
@@ -4878,6 +4884,10 @@ def run_create_blank_model(config):
                 num_attention_heads=num_heads,
                 num_key_value_heads=num_heads,
                 max_position_embeddings=max_pos,
+                num_experts=num_experts,
+                top_k=top_k,
+                num_shared_experts=num_shared,
+                moe_intermediate_size=moe_inter,
             )
             cfg.model_type = "qwen3_moe"
         elif model_type == "phi":
@@ -4934,8 +4944,32 @@ def run_create_blank_model(config):
             f"Initialising weights on {device.type.upper()} ({'fp16' if device.type == 'cuda' else 'fp32'})"
         )
         if device.type == "cuda":
+            # Estimate system RAM needed (Linux OOM killer is very effective)
+            import re as _re
+            kv_ratio = num_heads / max(num_heads, 1)
+            attn = num_layers * (hidden_size**2 + hidden_size**2 * kv_ratio * 2 + hidden_size**2)
+            ffn = num_layers * 3 * hidden_size * intermediate
+            emb = vocab_size * hidden_size
+            total_params = attn + ffn + emb
+            ram_est_gb = round(total_params * 2 * 1.20 / 1e9, 2)
+            with open("/proc/meminfo") as _f:
+                _mem = _f.read()
+            _m = _re.search(r"MemAvailable:\s+(\d+)", _mem)
+            ram_avail_gb = round(int(_m.group(1)) / 1024**2, 2) if _m else 0
+            if ram_est_gb > ram_avail_gb:
+                emit_log(
+                    f"RAM: ~{ram_est_gb} GB needed, only {ram_avail_gb} GB free — OOM risk!",
+                    "error",
+                )
+            else:
+                emit_log(
+                    f"RAM: ~{ram_est_gb} GB needed, {ram_avail_gb} GB free — OK",
+                    "info",
+                )
             cfg.torch_dtype = torch.float16
-            model = AutoModelForCausalLM.from_config(cfg).to(device)
+            torch.cuda.empty_cache()
+            with torch.device(device):
+                model = AutoModelForCausalLM.from_config(cfg)
             emit_log(
                 f"VRAM used: {round(torch.cuda.memory_allocated() / 1024**3, 2)} GB",
                 "info",
