@@ -6805,7 +6805,7 @@ def run_abliterate(config):
         def collect_hs(prompts, label):
             states = []
             for i, p in enumerate(prompts):
-                if stopflag.is_set():
+                if stop_flag.is_set():
                     raise KeyboardInterrupt
                 inputs = tokenizer(
                     p, return_tensors="pt", truncation=True, max_length=256
